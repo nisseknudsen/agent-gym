@@ -1,0 +1,9 @@
+[package]
+name = "headless_runner"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sim_core = { path = "../../crates/sim_core" }
+sim_host = { path = "../../crates/sim_host" }
+sim_td = { path = "../../crates/sim_games/td" }
