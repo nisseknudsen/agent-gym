@@ -1,15 +1,19 @@
 use crate::actions::TdAction;
 use crate::pathing::{compute_distance_field, move_mob, MobMoveResult};
-use crate::state::{Mob, TdConfig, TdState, Tower, WavePhase};
-use sim_core::{ActionEnvelope, Game, PlayerId, TerminalOutcome, Tick};
+use crate::state::{Mob, PendingBuild, TdConfig, TdState, Tower, WavePhase};
+use sim_core::{ActionEnvelope, Game, PlayerId, Speed, TerminalOutcome, Tick};
 
 #[derive(Clone, Debug)]
 pub enum TdEvent {
     TowerPlaced { x: u16, y: u16 },
     TowerDestroyed { x: u16, y: u16 },
     MobLeaked,
+    MobKilled { x: u16, y: u16 },
     WaveStarted { wave: u8 },
     WaveEnded { wave: u8 },
+    BuildQueued { x: u16, y: u16 },
+    BuildStarted { x: u16, y: u16 },
+    InsufficientGold { cost: u32, have: u32 },
 }
 
 #[derive(Clone, Debug)]
@@ -19,6 +23,8 @@ pub struct TdObservation {
     pub mobs_count: usize,
     pub towers_count: usize,
     pub leaks: u16,
+    pub gold: u32,
+    pub build_queue_size: usize,
 }
 
 pub struct TdGame {
@@ -53,31 +59,34 @@ impl Game for TdGame {
     ) {
         self.state.tick = tick;
 
-        // 1. Apply tower placements
-        let mut towers_placed = false;
+        // 1. Process build actions → queue builds, deduct gold
         for action in actions {
             match &action.payload {
                 TdAction::PlaceTower { x, y, hp } => {
-                    if self.try_place_tower(*x, *y, *hp) {
-                        out_events.push(TdEvent::TowerPlaced { x: *x, y: *y });
-                        towers_placed = true;
-                    }
+                    self.try_queue_build(*x, *y, *hp, tick, out_events);
                 }
             }
         }
 
-        // 2. Recompute distance field if towers were placed
+        // 2. Process completed builds → place towers
+        let towers_placed = self.process_build_queue(tick, out_events);
+
+        // 3. Recompute distance field if towers were placed
         if towers_placed {
             compute_distance_field(&mut self.state);
         }
 
-        // 3. Update wave phase (may spawn mobs)
+        // 4. Update wave phase (may spawn mobs, award gold on wave start)
         self.update_wave_phase(tick, out_events);
 
-        // 4. Move mobs (only on movement ticks, but always process attacks)
-        let move_interval = self.state.config.mob_move_interval_ticks as u64;
-        let is_move_tick = move_interval == 0 || tick % move_interval == 0;
-        self.move_all_mobs(is_move_tick, out_events);
+        // 5. Move mobs (mobs attack towers)
+        self.move_all_mobs(tick, out_events);
+
+        // 6. Tower attacks → towers shoot nearest mob in range
+        self.tower_attacks(tick, out_events);
+
+        // 7. Remove dead mobs
+        self.remove_dead_mobs(out_events);
     }
 
     fn observe(&self, tick: Tick, _player: PlayerId) -> Self::Observation {
@@ -87,6 +96,8 @@ impl Game for TdGame {
             mobs_count: self.state.mobs.len(),
             towers_count: self.state.towers.len(),
             leaks: self.state.leaks,
+            gold: self.state.gold,
+            build_queue_size: self.state.build_queue.queue.len(),
         }
     }
 
@@ -110,7 +121,14 @@ impl Game for TdGame {
 }
 
 impl TdGame {
-    fn try_place_tower(&mut self, x: u16, y: u16, hp: i32) -> bool {
+    fn try_queue_build(
+        &mut self,
+        x: u16,
+        y: u16,
+        hp: i32,
+        tick: Tick,
+        out_events: &mut Vec<TdEvent>,
+    ) -> bool {
         // Reject if out of bounds
         if !self.state.in_bounds(x, y) {
             return false;
@@ -123,10 +141,61 @@ impl TdGame {
             return false;
         }
 
-        // Place the tower
+        // Check gold
+        let cost = self.state.config.tower_cost;
+        if self.state.gold < cost {
+            out_events.push(TdEvent::InsufficientGold {
+                cost,
+                have: self.state.gold,
+            });
+            return false;
+        }
+
+        // Deduct gold
+        self.state.gold -= cost;
+
+        // Block the cell immediately (prevents overlapping builds)
         self.state.blocked[idx] = true;
-        self.state.towers.push(Tower { x, y, hp });
+
+        // Calculate completion tick
+        let build_ticks = self
+            .state
+            .config
+            .duration_to_ticks(self.state.config.build_time);
+        let complete_tick = tick + build_ticks;
+
+        // Add to build queue
+        self.state.build_queue.queue.push_back(PendingBuild {
+            x,
+            y,
+            hp,
+            complete_tick,
+        });
+
+        out_events.push(TdEvent::BuildQueued { x, y });
         true
+    }
+
+    fn process_build_queue(&mut self, tick: Tick, out_events: &mut Vec<TdEvent>) -> bool {
+        let mut towers_placed = false;
+
+        while let Some(build) = self.state.build_queue.queue.front() {
+            if tick >= build.complete_tick {
+                let build = self.state.build_queue.queue.pop_front().unwrap();
+                self.state.towers.push(Tower {
+                    x: build.x,
+                    y: build.y,
+                    hp: build.hp,
+                    next_fire_tick: tick,
+                });
+                out_events.push(TdEvent::TowerPlaced { x: build.x, y: build.y });
+                towers_placed = true;
+            } else {
+                break;
+            }
+        }
+
+        towers_placed
     }
 
     fn update_wave_phase(&mut self, tick: Tick, out_events: &mut Vec<TdEvent>) {
@@ -169,31 +238,52 @@ impl TdGame {
                         y: spawn.1,
                         hp: 10,
                         dmg: 1,
+                        speed: Speed::from_cells_per_sec(2),
+                        next_move_tick: tick, // can move immediately
                     });
                     *spawned += 1;
-                    *next_spawn_tick = tick + self.state.config.spawn_interval_ticks as u64;
+                    *next_spawn_tick =
+                        tick + self.state.config.duration_to_ticks(self.state.config.spawn_interval);
                 }
 
                 // Check if wave is complete
                 if *spawned >= *wave_size && self.state.mobs.is_empty() {
                     let wave = self.state.current_wave;
+
+                    // Award gold for completing the wave
+                    let gold_award = self.state.config.gold_per_wave_base
+                        + self.state.config.gold_per_wave_growth * (wave as u32 - 1);
+                    self.state.gold += gold_award;
+
                     out_events.push(TdEvent::WaveEnded { wave });
                     self.state.phase = WavePhase::Pause {
-                        until_tick: tick + self.state.config.inter_wave_pause_ticks as u64,
+                        until_tick: tick
+                            + self
+                                .state
+                                .config
+                                .duration_to_ticks(self.state.config.inter_wave_pause),
                     };
                 }
             }
         }
     }
 
-    fn move_all_mobs(&mut self, is_move_tick: bool, out_events: &mut Vec<TdEvent>) {
+    fn move_all_mobs(&mut self, tick: Tick, out_events: &mut Vec<TdEvent>) {
         let mut leaked_indices = Vec::new();
         let mut attacks: Vec<(usize, usize)> = Vec::new(); // (mob_idx, tower_idx)
 
         // First pass: determine moves and attacks
         for i in 0..self.state.mobs.len() {
-            match move_mob(&mut self.state, i, is_move_tick) {
-                MobMoveResult::Moved => {}
+            let can_move = tick >= self.state.mobs[i].next_move_tick;
+            match move_mob(&mut self.state, i, can_move) {
+                MobMoveResult::Moved => {
+                    // Update next move tick based on speed
+                    let interval = self
+                        .state
+                        .config
+                        .speed_to_move_interval(self.state.mobs[i].speed);
+                    self.state.mobs[i].next_move_tick = tick + interval;
+                }
                 MobMoveResult::Leaked => {
                     leaked_indices.push(i);
                 }
@@ -237,6 +327,76 @@ impl TdGame {
             self.state.leaks += 1;
             self.state.mobs.remove(i);
             out_events.push(TdEvent::MobLeaked);
+        }
+    }
+
+    fn tower_attacks(&mut self, tick: Tick, _out_events: &mut Vec<TdEvent>) {
+        let range = self.state.config.tower_range;
+        let damage = self.state.config.tower_damage;
+        let fire_period_ticks = self
+            .state
+            .config
+            .duration_to_ticks(self.state.config.tower_fire_period);
+
+        for tower in &mut self.state.towers {
+            // Check if tower can fire this tick
+            if tick < tower.next_fire_tick {
+                continue;
+            }
+
+            // Find target: nearest mob within range, tie-break by lowest HP
+            if let Some(target_idx) = Self::find_tower_target(
+                tower.x,
+                tower.y,
+                range,
+                &self.state.mobs,
+            ) {
+                // Deal damage
+                self.state.mobs[target_idx].hp -= damage;
+
+                // Set next fire tick
+                tower.next_fire_tick = tick + fire_period_ticks;
+            }
+        }
+    }
+
+    fn find_tower_target(tx: u16, ty: u16, range: u16, mobs: &[Mob]) -> Option<usize> {
+        let range_sq = (range as i32) * (range as i32);
+        let mut best: Option<(usize, i32, i32)> = None; // (index, dist_sq, hp)
+
+        for (i, mob) in mobs.iter().enumerate() {
+            let dx = (mob.x as i32) - (tx as i32);
+            let dy = (mob.y as i32) - (ty as i32);
+            let dist_sq = dx * dx + dy * dy;
+
+            if dist_sq <= range_sq {
+                let dominated = match best {
+                    None => false,
+                    Some((_, best_dist, best_hp)) => {
+                        // Prefer closer mobs, tie-break by lower HP
+                        dist_sq < best_dist || (dist_sq == best_dist && mob.hp < best_hp)
+                    }
+                };
+                if best.is_none() || dominated {
+                    best = Some((i, dist_sq, mob.hp));
+                }
+            }
+        }
+
+        best.map(|(idx, _, _)| idx)
+    }
+
+    fn remove_dead_mobs(&mut self, out_events: &mut Vec<TdEvent>) {
+        let gold_per_kill = self.state.config.gold_per_mob_kill;
+        let mut i = 0;
+        while i < self.state.mobs.len() {
+            if self.state.mobs[i].hp <= 0 {
+                let mob = self.state.mobs.remove(i);
+                self.state.gold += gold_per_kill;
+                out_events.push(TdEvent::MobKilled { x: mob.x, y: mob.y });
+            } else {
+                i += 1;
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
-use sim_core::Tick;
+use sim_core::{Micros, Speed, Tick};
+use std::collections::VecDeque;
 
 #[derive(Clone, Debug)]
 pub struct TdConfig {
@@ -8,12 +9,26 @@ pub struct TdConfig {
     pub goal: (u16, u16),
     pub tick_hz: u32,
     pub waves_total: u8,
-    pub inter_wave_pause_ticks: u32,
+    pub inter_wave_pause: Micros,
     pub wave_base_size: u16,
     pub wave_size_growth: u16,
-    pub spawn_interval_ticks: u32,
+    pub spawn_interval: Micros,
     pub max_leaks: u16,
-    pub mob_move_interval_ticks: u32, // ticks between mob movements (e.g., 30 at 60Hz = 2 cells/sec)
+
+    // Economy
+    pub gold_start: u32,
+    pub gold_per_wave_base: u32,
+    pub gold_per_wave_growth: u32,
+    pub tower_cost: u32,
+    pub gold_per_mob_kill: u32,
+
+    // Build pacing
+    pub build_time: Micros,
+
+    // Tower combat
+    pub tower_range: u16,
+    pub tower_damage: i32,
+    pub tower_fire_period: Micros,
 }
 
 impl Default for TdConfig {
@@ -25,14 +40,53 @@ impl Default for TdConfig {
             goal: (31, 16),
             tick_hz: 60,
             waves_total: 10,
-            inter_wave_pause_ticks: 60 * 30,
+            inter_wave_pause: Micros::from_secs(30),
             wave_base_size: 5,
             wave_size_growth: 3,
-            spawn_interval_ticks: 10,
+            spawn_interval: Micros::from_secs(1),
             max_leaks: 10,
-            mob_move_interval_ticks: 30, // 2 cells/sec at 60Hz
+
+            // Economy defaults
+            gold_start: 50,
+            gold_per_wave_base: 25,
+            gold_per_wave_growth: 5,
+            tower_cost: 15,
+            gold_per_mob_kill: 1,
+
+            // Build pacing
+            build_time: Micros::from_secs(5),
+
+            // Tower combat
+            tower_range: 3,
+            tower_damage: 5,
+            tower_fire_period: Micros::from_secs(1),
         }
     }
+}
+
+impl TdConfig {
+    /// Convert a duration to ticks.
+    pub fn duration_to_ticks(&self, d: Micros) -> u64 {
+        d.to_ticks(self.tick_hz)
+    }
+
+    /// Convert speed to ticks between moves.
+    pub fn speed_to_move_interval(&self, s: Speed) -> u64 {
+        s.to_tick_interval(self.tick_hz)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PendingBuild {
+    pub x: u16,
+    pub y: u16,
+    pub hp: i32,
+    pub complete_tick: Tick,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct BuildQueue {
+    pub queue: VecDeque<PendingBuild>,
 }
 
 #[derive(Clone, Debug)]
@@ -40,6 +94,7 @@ pub struct Tower {
     pub x: u16,
     pub y: u16,
     pub hp: i32,
+    pub next_fire_tick: Tick,
 }
 
 #[derive(Clone, Debug)]
@@ -48,6 +103,8 @@ pub struct Mob {
     pub y: u16,
     pub hp: i32,
     pub dmg: i32,
+    pub speed: Speed,         // cells per second
+    pub next_move_tick: Tick, // when this mob can move next
 }
 
 #[derive(Clone, Debug)]
@@ -73,11 +130,14 @@ pub struct TdState {
     pub phase: WavePhase,
     pub leaks: u16,
     pub dist: Vec<u32>,
+    pub gold: u32,
+    pub build_queue: BuildQueue,
 }
 
 impl TdState {
     pub fn new(config: TdConfig) -> Self {
         let size = (config.width as usize) * (config.height as usize);
+        let gold_start = config.gold_start;
         Self {
             tick: 0,
             blocked: vec![false; size],
@@ -87,6 +147,8 @@ impl TdState {
             phase: WavePhase::Pause { until_tick: 1 },
             leaks: 0,
             dist: vec![u32::MAX; size],
+            gold: gold_start,
+            build_queue: BuildQueue::default(),
             config,
         }
     }

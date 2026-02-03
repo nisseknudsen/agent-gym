@@ -7,38 +7,89 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let realtime = args.iter().any(|a| a == "--realtime" || a == "-r");
 
-    let config = TdConfig {
-        width: 32,
-        height: 32,
-        spawn: (0, 16),
-        goal: (31, 16),
-        tick_hz: 60,
-        waves_total: 10,
-        inter_wave_pause_ticks: 60 * 30, // 30 seconds
-        wave_base_size: 5,
-        wave_size_growth: 3,
-        spawn_interval_ticks: 60,        // spawn one mob per second
-        max_leaks: 10,
-        mob_move_interval_ticks: 30,     // 2 cells/sec at 60Hz
-    };
+    let config = TdConfig::default();
 
     let tick_hz = config.tick_hz;
+    let tower_cost = config.tower_cost;
+    let gold_start = config.gold_start;
+    let gold_per_wave_base = config.gold_per_wave_base;
+    let gold_per_wave_growth = config.gold_per_wave_growth;
+    let build_time_ticks = config.duration_to_ticks(config.build_time);
+    let inter_wave_pause_ticks = config.duration_to_ticks(config.inter_wave_pause);
+
     let mut host = MatchHost::<TdGame>::new(config, 12345, tick_hz);
     let player = host.join_player();
 
-    // Place towers at tick 1 (before wave starts)
-    // Full vertical wall blocking path at x=15 (from y=0 to y=31)
-    let towers: Vec<(u16, u16)> = (0..32).map(|y| (15, y)).collect();
+    // Towers to place: vertical wall at x=15 (from y=0 to y=31)
+    // Order towers starting from y=16 (the mob path) outward for best coverage
+    let mut towers: Vec<(u16, u16)> = Vec::new();
+    for offset in 0..=16 {
+        towers.push((15, 16 + offset)); // y=16, 17, 18, ... 31
+        if offset > 0 && 16 >= offset {
+            towers.push((15, 16 - offset)); // y=15, 14, 13, ... 0
+        }
+    }
 
-    for (i, &(x, y)) in towers.iter().enumerate() {
+    // Schedule tower placements over time based on gold constraints
+    // Starting gold: 50, tower cost: 15 → can afford 3 towers initially
+    // Each wave awards: 25 + 5*(wave-1) gold
+    // Build time: 5 seconds (300 ticks at 60Hz)
+    // Inter-wave pause: 30 seconds (1800 ticks)
+
+    let mut tower_idx = 0;
+    let mut tick: u64 = 1;
+    let mut gold = gold_start;
+    let mut wave: u32 = 0;
+
+    // First, build towers with starting gold
+    while tower_idx < towers.len() && gold >= tower_cost {
+        let (x, y) = towers[tower_idx];
         host.submit(ActionEnvelope {
             player_id: player,
-            action_id: i as u64,
-            intended_tick: 1,
+            action_id: tower_idx as u64,
+            intended_tick: tick,
             payload: TdAction::PlaceTower { x, y, hp: 100 },
         })
         .unwrap();
+        gold -= tower_cost;
+        tower_idx += 1;
     }
+
+    // Then schedule more towers as waves arrive and grant gold
+    // Wave 1 starts at tick 1, then each wave after inter_wave_pause
+    while tower_idx < towers.len() && wave < 10 {
+        wave += 1;
+        let wave_gold = gold_per_wave_base + gold_per_wave_growth * (wave - 1);
+        gold += wave_gold;
+
+        // Schedule builds at the start of each wave's pause period
+        // Add build_time_ticks offset so builds happen sequentially
+        let wave_start_tick = if wave == 1 {
+            1
+        } else {
+            1 + (wave as u64 - 1) * inter_wave_pause_ticks
+        };
+
+        // Build as many towers as we can afford with current gold
+        let mut builds_this_wave = 0;
+        while tower_idx < towers.len() && gold >= tower_cost {
+            let (x, y) = towers[tower_idx];
+            // Stagger builds by build_time to allow sequential completion
+            tick = wave_start_tick + builds_this_wave * build_time_ticks;
+            host.submit(ActionEnvelope {
+                player_id: player,
+                action_id: tower_idx as u64,
+                intended_tick: tick,
+                payload: TdAction::PlaceTower { x, y, hp: 100 },
+            })
+            .unwrap();
+            gold -= tower_cost;
+            tower_idx += 1;
+            builds_this_wave += 1;
+        }
+    }
+
+    println!("Scheduled {} tower placements", tower_idx);
 
     if realtime {
         run_realtime(&mut host, tick_hz);
@@ -119,8 +170,14 @@ fn print_event(tick: u64, event: &TdEvent) {
             println!("[{:>6}] Tower DESTROYED at ({}, {})", tick, x, y)
         }
         TdEvent::MobLeaked => println!("[{:>6}] Mob leaked!", tick),
+        TdEvent::MobKilled { x, y } => println!("[{:>6}] Mob killed at ({}, {})", tick, x, y),
         TdEvent::WaveStarted { wave } => println!("[{:>6}] === Wave {} started ===", tick, wave),
         TdEvent::WaveEnded { wave } => println!("[{:>6}] === Wave {} ended ===", tick, wave),
+        TdEvent::BuildQueued { x, y } => println!("[{:>6}] Build queued at ({}, {})", tick, x, y),
+        TdEvent::BuildStarted { x, y } => println!("[{:>6}] Build started at ({}, {})", tick, x, y),
+        TdEvent::InsufficientGold { cost, have } => {
+            println!("[{:>6}] Insufficient gold: need {}, have {}", tick, cost, have)
+        }
     }
 }
 
@@ -128,11 +185,13 @@ fn print_status(host: &MatchHost<TdGame>) {
     let state = host.game().state();
     let time_secs = host.current_tick() as f64 / host.tick_hz() as f64;
     println!(
-        "  [{:>5.1}s] Wave {}, Mobs: {}, Towers: {}, Leaks: {}/{}",
+        "  [{:>5.1}s] Wave {}, Mobs: {}, Towers: {}, Gold: {}, Queue: {}, Leaks: {}/{}",
         time_secs,
         state.current_wave,
         state.mobs.len(),
         state.towers.len(),
+        state.gold,
+        state.build_queue.queue.len(),
         state.leaks,
         state.config.max_leaks
     );
@@ -144,6 +203,9 @@ fn print_event_summary(events: &[TdEvent]) {
     let mut waves_started = 0;
     let mut waves_ended = 0;
     let mut mob_leaks = 0;
+    let mut mobs_killed = 0;
+    let mut builds_queued = 0;
+    let mut insufficient_gold = 0;
 
     for event in events {
         match event {
@@ -152,13 +214,20 @@ fn print_event_summary(events: &[TdEvent]) {
             TdEvent::WaveStarted { .. } => waves_started += 1,
             TdEvent::WaveEnded { .. } => waves_ended += 1,
             TdEvent::MobLeaked => mob_leaks += 1,
+            TdEvent::MobKilled { .. } => mobs_killed += 1,
+            TdEvent::BuildQueued { .. } => builds_queued += 1,
+            TdEvent::BuildStarted { .. } => {}
+            TdEvent::InsufficientGold { .. } => insufficient_gold += 1,
         }
     }
 
     println!("\n=== Event Summary ===");
+    println!("Builds queued: {}", builds_queued);
     println!("Towers placed: {}", towers_placed);
     println!("Towers destroyed: {}", towers_destroyed);
+    println!("Mobs killed: {}", mobs_killed);
+    println!("Mob leak events: {}", mob_leaks);
     println!("Waves started: {}", waves_started);
     println!("Waves ended: {}", waves_ended);
-    println!("Mob leak events: {}", mob_leaks);
+    println!("Insufficient gold events: {}", insufficient_gold);
 }
