@@ -49,8 +49,7 @@ fn main() {
             action_id: tower_idx as u64,
             intended_tick: tick,
             payload: TdAction::PlaceTower { x, y, hp: 100 },
-        })
-        .unwrap();
+        });
         gold -= tower_cost;
         tower_idx += 1;
     }
@@ -81,8 +80,7 @@ fn main() {
                 action_id: tower_idx as u64,
                 intended_tick: tick,
                 payload: TdAction::PlaceTower { x, y, hp: 100 },
-            })
-            .unwrap();
+            });
             gold -= tower_cost;
             tower_idx += 1;
             builds_this_wave += 1;

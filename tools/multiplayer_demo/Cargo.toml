@@ -1,0 +1,10 @@
+[package]
+name = "multiplayer_demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sim_core = { path = "../../crates/sim_core" }
+sim_server = { path = "../../crates/sim_server" }
+sim_td = { path = "../../crates/sim_games/td" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

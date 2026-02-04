@@ -1,11 +1,6 @@
 use sim_core::{ActionEnvelope, Game, PlayerId, TerminalOutcome, Tick};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SubmitError {
-    TooLate,
-}
-
 #[derive(Debug)]
 pub struct RunResult<G: Game> {
     pub outcome: Option<TerminalOutcome>,
@@ -38,15 +33,24 @@ impl<G: Game> MatchHost<G> {
         id
     }
 
-    pub fn submit(&mut self, action: ActionEnvelope<G::Action>) -> Result<(), SubmitError> {
-        if action.intended_tick <= self.current_tick {
-            return Err(SubmitError::TooLate);
-        }
+    /// Submit an action to be executed at the given tick.
+    /// If `intended_tick` is None or in the past, schedules for the next tick.
+    /// Returns the actual tick the action was scheduled for.
+    pub fn submit(&mut self, mut action: ActionEnvelope<G::Action>) -> Tick {
+        // If intended tick is in the past or current, schedule for next tick
+        let scheduled_tick = if action.intended_tick <= self.current_tick {
+            self.current_tick + 1
+        } else {
+            action.intended_tick
+        };
+
+        action.intended_tick = scheduled_tick;
         self.pending_actions
-            .entry(action.intended_tick)
+            .entry(scheduled_tick)
             .or_default()
             .push(action);
-        Ok(())
+
+        scheduled_tick
     }
 
     pub fn run_for_ticks(&mut self, max_ticks: Tick) -> RunResult<G> {

@@ -138,13 +138,15 @@ impl TdState {
     pub fn new(config: TdConfig) -> Self {
         let size = (config.width as usize) * (config.height as usize);
         let gold_start = config.gold_start;
+        // Use inter_wave_pause for initial delay before first wave
+        let initial_pause_ticks = config.duration_to_ticks(config.inter_wave_pause);
         Self {
             tick: 0,
             blocked: vec![false; size],
             towers: Vec::new(),
             mobs: Vec::new(),
             current_wave: 0,
-            phase: WavePhase::Pause { until_tick: 1 },
+            phase: WavePhase::Pause { until_tick: initial_pause_ticks },
             leaks: 0,
             dist: vec![u32::MAX; size],
             gold: gold_start,

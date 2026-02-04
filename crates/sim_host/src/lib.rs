@@ -1,3 +1,3 @@
 pub mod host;
 
-pub use host::{MatchHost, RunResult, SubmitError};
+pub use host::{MatchHost, RunResult};

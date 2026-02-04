@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/sim_core",
     "crates/sim_host",
+    "crates/sim_server",
     "crates/sim_games/td",
     "tools/headless_runner",
+    "tools/multiplayer_demo",
 ]

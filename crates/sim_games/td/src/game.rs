@@ -16,15 +16,77 @@ pub enum TdEvent {
     InsufficientGold { cost: u32, have: u32 },
 }
 
+/// Tower info for observation.
+#[derive(Clone, Debug)]
+pub struct ObsTower {
+    pub x: u16,
+    pub y: u16,
+    pub hp: i32,
+}
+
+/// Mob info for observation.
+#[derive(Clone, Debug)]
+pub struct ObsMob {
+    pub x: u16,
+    pub y: u16,
+    pub hp: i32,
+}
+
+/// Pending build info for observation.
+#[derive(Clone, Debug)]
+pub struct ObsPendingBuild {
+    pub x: u16,
+    pub y: u16,
+    pub complete_tick: Tick,
+}
+
+/// Wave status for observation.
+#[derive(Clone, Debug)]
+pub enum ObsWaveStatus {
+    Pause {
+        until_tick: Tick,
+        next_wave_size: u16,
+    },
+    InWave {
+        spawned: u16,
+        wave_size: u16,
+        next_spawn_tick: Tick,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub struct TdObservation {
+    // Time
     pub tick: Tick,
-    pub current_wave: u8,
-    pub mobs_count: usize,
-    pub towers_count: usize,
-    pub leaks: u16,
+    pub tick_hz: u32,
+
+    // Map info
+    pub map_width: u16,
+    pub map_height: u16,
+    pub spawn: (u16, u16),
+    pub goal: (u16, u16),
+
+    // Game rules
+    pub max_leaks: u16,
+    pub tower_cost: u32,
+    pub tower_range: u16,
+    pub tower_damage: i32,
+    pub build_time_ticks: u64,
+    pub gold_per_mob_kill: u32,
+
+    // Current resources
     pub gold: u32,
-    pub build_queue_size: usize,
+    pub leaks: u16,
+
+    // Wave info
+    pub current_wave: u8,
+    pub waves_total: u8,
+    pub wave_status: ObsWaveStatus,
+
+    // Entities
+    pub towers: Vec<ObsTower>,
+    pub mobs: Vec<ObsMob>,
+    pub build_queue: Vec<ObsPendingBuild>,
 }
 
 pub struct TdGame {
@@ -90,14 +152,88 @@ impl Game for TdGame {
     }
 
     fn observe(&self, tick: Tick, _player: PlayerId) -> Self::Observation {
+        let config = &self.state.config;
+
+        // Convert wave phase to observation format
+        let wave_status = match &self.state.phase {
+            WavePhase::Pause { until_tick } => {
+                // Calculate next wave size
+                let next_wave = self.state.current_wave + 1;
+                let next_wave_size = if next_wave <= config.waves_total {
+                    config.wave_base_size + config.wave_size_growth * (next_wave as u16 - 1)
+                } else {
+                    0 // No more waves
+                };
+                ObsWaveStatus::Pause {
+                    until_tick: *until_tick,
+                    next_wave_size,
+                }
+            }
+            WavePhase::InWave {
+                spawned,
+                wave_size,
+                next_spawn_tick,
+            } => ObsWaveStatus::InWave {
+                spawned: *spawned,
+                wave_size: *wave_size,
+                next_spawn_tick: *next_spawn_tick,
+            },
+        };
+
         TdObservation {
             tick,
-            current_wave: self.state.current_wave,
-            mobs_count: self.state.mobs.len(),
-            towers_count: self.state.towers.len(),
-            leaks: self.state.leaks,
+            tick_hz: config.tick_hz,
+
+            map_width: config.width,
+            map_height: config.height,
+            spawn: config.spawn,
+            goal: config.goal,
+
+            max_leaks: config.max_leaks,
+            tower_cost: config.tower_cost,
+            tower_range: config.tower_range,
+            tower_damage: config.tower_damage,
+            build_time_ticks: config.duration_to_ticks(config.build_time),
+            gold_per_mob_kill: config.gold_per_mob_kill,
+
             gold: self.state.gold,
-            build_queue_size: self.state.build_queue.queue.len(),
+            leaks: self.state.leaks,
+
+            current_wave: self.state.current_wave,
+            waves_total: config.waves_total,
+            wave_status,
+
+            towers: self
+                .state
+                .towers
+                .iter()
+                .map(|t| ObsTower {
+                    x: t.x,
+                    y: t.y,
+                    hp: t.hp,
+                })
+                .collect(),
+            mobs: self
+                .state
+                .mobs
+                .iter()
+                .map(|m| ObsMob {
+                    x: m.x,
+                    y: m.y,
+                    hp: m.hp,
+                })
+                .collect(),
+            build_queue: self
+                .state
+                .build_queue
+                .queue
+                .iter()
+                .map(|b| ObsPendingBuild {
+                    x: b.x,
+                    y: b.y,
+                    complete_tick: b.complete_tick,
+                })
+                .collect(),
         }
     }
 

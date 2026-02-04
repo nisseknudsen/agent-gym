@@ -1,0 +1,12 @@
+[package]
+name = "sim_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sim_core = { path = "../sim_core" }
+sim_host = { path = "../sim_host" }
+tokio = { version = "1", features = ["rt", "time", "sync"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
