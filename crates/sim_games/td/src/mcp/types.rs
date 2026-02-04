@@ -262,3 +262,96 @@ pub enum MatchStatusInfo {
 pub struct ListMatchesResult {
     pub matches: Vec<MatchInfoResult>,
 }
+
+/// Game rules and mechanics explanation.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RulesResult {
+    /// Name of the game.
+    pub game: String,
+    /// Brief description of the game objective.
+    pub objective: String,
+    /// How to win the game.
+    pub win_condition: String,
+    /// How to lose the game.
+    pub lose_condition: String,
+    /// Description of the map layout.
+    pub map: MapRules,
+    /// How towers work.
+    pub towers: TowerRules,
+    /// How mobs work.
+    pub mobs: MobRules,
+    /// How waves work.
+    pub waves: WaveRules,
+    /// Economy rules.
+    pub economy: EconomyRules,
+    /// Available actions the agent can take.
+    pub actions: Vec<ActionRule>,
+    /// Strategic tips.
+    pub tips: Vec<String>,
+}
+
+/// Map layout rules.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MapRules {
+    /// Description of the map.
+    pub description: String,
+    /// Default map dimensions.
+    pub default_size: String,
+    /// Where mobs spawn.
+    pub spawn_description: String,
+    /// Where mobs try to reach.
+    pub goal_description: String,
+}
+
+/// Tower mechanics.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TowerRules {
+    /// How towers are placed.
+    pub placement: String,
+    /// How towers attack.
+    pub attack: String,
+    /// What happens when towers are damaged.
+    pub destruction: String,
+}
+
+/// Mob mechanics.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MobRules {
+    /// How mobs move.
+    pub movement: String,
+    /// What happens when mobs reach the goal.
+    pub leaking: String,
+    /// How mobs interact with towers.
+    pub combat: String,
+}
+
+/// Wave mechanics.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct WaveRules {
+    /// How waves progress.
+    pub progression: String,
+    /// Time between waves.
+    pub pause_between: String,
+    /// How wave difficulty scales.
+    pub scaling: String,
+}
+
+/// Economy rules.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EconomyRules {
+    /// How gold is earned.
+    pub income: String,
+    /// What gold is spent on.
+    pub spending: String,
+}
+
+/// Description of an available action.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ActionRule {
+    /// Action name.
+    pub name: String,
+    /// What the action does.
+    pub description: String,
+    /// Parameters for the action.
+    pub parameters: String,
+}

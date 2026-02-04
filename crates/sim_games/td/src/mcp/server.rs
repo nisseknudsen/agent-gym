@@ -85,6 +85,60 @@ impl TdMcpServer {
         Ok(serde_json::to_string(&ListMatchesResult { matches }).unwrap())
     }
 
+    /// Get the game rules and mechanics.
+    #[tool(description = "Get the complete rules and mechanics of the Tower Defense game. Call this first to understand how to play.")]
+    async fn rules(&self) -> Result<String, String> {
+        let rules = RulesResult {
+            game: "Tower Defense".to_string(),
+            objective: "Defend your base by building towers to stop waves of mobs from reaching the goal. Survive all waves to win.".to_string(),
+            win_condition: "Complete all waves without exceeding the maximum number of leaks (mobs reaching the goal).".to_string(),
+            lose_condition: "If more than max_leaks mobs reach the goal, you lose.".to_string(),
+            map: MapRules {
+                description: "A 2D grid where mobs travel from spawn to goal. Towers can be placed on any unoccupied cell.".to_string(),
+                default_size: "32x32 cells".to_string(),
+                spawn_description: "Mobs spawn at the spawn point (default: left side, x=0, y=16).".to_string(),
+                goal_description: "Mobs try to reach the goal (default: right side, x=31, y=16). Mobs pathfind around towers.".to_string(),
+            },
+            towers: TowerRules {
+                placement: "Use submit_action with PlaceTower to queue a tower build. Costs gold and takes build_time_ticks to complete. Cell is blocked immediately when build starts.".to_string(),
+                attack: "Towers automatically attack the nearest mob within range every tower_fire_period. They deal tower_damage per hit.".to_string(),
+                destruction: "Mobs attack adjacent towers. When a tower's HP reaches 0, it is destroyed and the cell becomes unblocked.".to_string(),
+            },
+            mobs: MobRules {
+                movement: "Mobs spawn during waves and pathfind toward the goal, moving around towers. They take the shortest available path. If the path is completely blocked, mobs will attack towers in their way to create a path.".to_string(),
+                leaking: "When a mob reaches the goal, it 'leaks' and is removed. Each leak increments the leak counter.".to_string(),
+                combat: "Mobs attack towers that block their path. When adjacent to a blocking tower, they deal damage instead of moving.".to_string(),
+            },
+            waves: WaveRules {
+                progression: "The game consists of multiple waves. Each wave spawns a number of mobs. After all mobs in a wave are spawned and cleared, the next wave begins after a pause.".to_string(),
+                pause_between: "There is an inter_wave_pause between waves (also before the first wave), giving you time to build towers.".to_string(),
+                scaling: "Each wave has more mobs than the last: wave_size = wave_base_size + wave_size_growth * (wave_number - 1).".to_string(),
+            },
+            economy: EconomyRules {
+                income: "You start with gold_start gold. Earn gold_per_mob_kill for each mob killed. Earn bonus gold when a wave ends: gold_per_wave_base + gold_per_wave_growth * (wave - 1).".to_string(),
+                spending: "Towers cost tower_cost gold. Gold is deducted when you queue a build, not when it completes.".to_string(),
+            },
+            actions: vec![
+                ActionRule {
+                    name: "PlaceTower".to_string(),
+                    description: "Queue a tower to be built at the specified coordinates.".to_string(),
+                    parameters: "x: u16, y: u16 - grid coordinates. Must be within map bounds and not already blocked.".to_string(),
+                },
+            ],
+            tips: vec![
+                "Use the observe tool to see current game state including map size, spawn/goal positions, and all entity positions.".to_string(),
+                "Build towers near the mob path to maximize damage. Mobs walk in a straight line from spawn to goal unless blocked.".to_string(),
+                "Place towers to create a maze - mobs will pathfind around them, giving towers more time to attack.".to_string(),
+                "You can completely block the path, but mobs will then attack your towers to break through. This can be a valid strategy if your towers can kill mobs fast enough.".to_string(),
+                "Check gold before building. If you don't have enough, you'll get an InsufficientGold event.".to_string(),
+                "Watch the wave_status in observe to know when the next wave starts and how many mobs it will have.".to_string(),
+                "Poll events regularly to track what's happening (mob kills, tower destruction, wave starts/ends).".to_string(),
+            ],
+        };
+
+        Ok(serde_json::to_string(&rules).unwrap())
+    }
+
     /// Terminate a match.
     #[tool(description = "Terminate an active match")]
     async fn terminate_match(&self, Parameters(params): Parameters<TerminateMatchParams>) -> Result<String, String> {
