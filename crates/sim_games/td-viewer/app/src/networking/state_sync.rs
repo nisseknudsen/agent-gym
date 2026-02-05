@@ -340,6 +340,8 @@ pub fn process_responses(
                         connection.event_cursor = 0;
                         connection.status = ConnectionStatus::Connecting;
                         *ui_state = UiState::Spectating;
+                        // Update browser URL so back button works
+                        crate::ui::push_browser_state(&format!("match/{}", match_id));
                         tracing::info!("Spectating match {} with token {}", match_id, spectate_result.session_token);
                     }
                     Err(e) => {
