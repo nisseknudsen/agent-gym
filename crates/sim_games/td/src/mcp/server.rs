@@ -150,6 +150,21 @@ impl TdMcpServer {
         Ok("Match terminated".to_string())
     }
 
+    /// Spectate a match (read-only session).
+    #[tool(description = "Spectate a match as a read-only viewer. Returns a session token that can observe and poll events but cannot submit actions.")]
+    async fn spectate_match(&self, Parameters(params): Parameters<SpectateMatchParams>) -> Result<String, String> {
+        let session = self
+            .game_server
+            .spectate_match(params.match_id)
+            .await
+            .map_err(|e| format!("Failed to spectate match: {}", e))?;
+
+        Ok(serde_json::to_string(&SpectateMatchResult {
+            session_token: session.0,
+        })
+        .unwrap())
+    }
+
     /// Join a match as a new player.
     #[tool(description = "Join a match as a new player. Returns a session token and player ID.")]
     async fn join_match(&self, Parameters(params): Parameters<JoinMatchParams>) -> Result<String, String> {

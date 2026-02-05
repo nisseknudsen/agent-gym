@@ -122,6 +122,18 @@ where
         }
     }
 
+    /// Spectate a match (read-only session).
+    pub async fn spectate_match(
+        &self,
+        match_id: MatchId,
+    ) -> Result<SessionToken, MatchError> {
+        let matches = self.matches.read().await;
+
+        let entry = matches.get(&match_id).ok_or(MatchError::NotFound)?;
+
+        Ok(entry.handle.spectate().await)
+    }
+
     /// Join a match as a new player.
     pub async fn join_match(
         &self,

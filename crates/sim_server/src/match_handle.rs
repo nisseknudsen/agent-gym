@@ -2,7 +2,7 @@ use crate::events::EventBuffer;
 use crate::types::{EventCursor, MatchStatus, ServerEvent, SessionToken};
 use sim_core::{ActionEnvelope, ActionId, Game, PlayerId, Tick};
 use sim_host::MatchHost;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -13,6 +13,7 @@ pub struct MatchInner<G: Game> {
     pub events: EventBuffer<G::Event>,
     pub sessions: HashMap<SessionToken, PlayerId>,
     pub players: HashMap<PlayerId, SessionToken>,
+    pub spectators: HashSet<SessionToken>,
     pub next_session_id: u64,
     pub next_action_id: ActionId,
     pub required_players: u8,
@@ -26,6 +27,7 @@ impl<G: Game> MatchInner<G> {
             events: EventBuffer::new(event_buffer_capacity),
             sessions: HashMap::new(),
             players: HashMap::new(),
+            spectators: HashSet::new(),
             next_session_id: 1,
             next_action_id: 1,
             required_players,
@@ -84,6 +86,16 @@ impl<G: Game> MatchHandle<G> {
         self.shutdown.store(true, Ordering::Relaxed);
     }
 
+    /// Create a spectator session for the match.
+    /// Returns a session token. Spectators can observe and poll events but cannot submit actions.
+    pub async fn spectate(&self) -> SessionToken {
+        let mut inner = self.inner.lock().await;
+        let session = SessionToken(inner.next_session_id);
+        inner.next_session_id += 1;
+        inner.spectators.insert(session);
+        session
+    }
+
     /// Join a new player to the match.
     /// Returns the session token and player ID.
     pub async fn join_player(&self) -> Option<(SessionToken, PlayerId)> {
@@ -119,7 +131,7 @@ impl<G: Game> MatchHandle<G> {
         }
     }
 
-    /// Remove a player from the match.
+    /// Remove a player or spectator from the match.
     pub async fn leave_player(&self, session: SessionToken) -> bool {
         let mut inner = self.inner.lock().await;
 
@@ -127,7 +139,7 @@ impl<G: Game> MatchHandle<G> {
             inner.players.remove(&player_id);
             true
         } else {
-            false
+            inner.spectators.remove(&session)
         }
     }
 
@@ -170,11 +182,17 @@ impl<G: Game> MatchHandle<G> {
         Ok((action_id, scheduled_tick))
     }
 
-    /// Get the current observation for a player.
+    /// Get the current observation for a player or spectator.
     pub async fn observe(&self, session: SessionToken) -> Option<G::Observation> {
         let inner = self.inner.lock().await;
 
-        let player_id = inner.sessions.get(&session).copied()?;
+        let player_id = if let Some(&pid) = inner.sessions.get(&session) {
+            pid
+        } else if inner.spectators.contains(&session) {
+            0
+        } else {
+            return None;
+        };
         let tick = inner.host.current_tick();
         Some(inner.host.game().observe(tick, player_id))
     }
@@ -187,8 +205,8 @@ impl<G: Game> MatchHandle<G> {
     ) -> Option<(Vec<ServerEvent<G::Event>>, EventCursor)> {
         let inner = self.inner.lock().await;
 
-        // Verify session is valid
-        if !inner.sessions.contains_key(&session) {
+        // Verify session is valid (player or spectator)
+        if !inner.sessions.contains_key(&session) && !inner.spectators.contains(&session) {
             return None;
         }
 
@@ -213,10 +231,10 @@ impl<G: Game> MatchHandle<G> {
         inner.player_count()
     }
 
-    /// Check if a session is valid.
+    /// Check if a session is valid (player or spectator).
     pub async fn is_valid_session(&self, session: SessionToken) -> bool {
         let inner = self.inner.lock().await;
-        inner.sessions.contains_key(&session)
+        inner.sessions.contains_key(&session) || inner.spectators.contains(&session)
     }
 
     /// Step one tick and update status.

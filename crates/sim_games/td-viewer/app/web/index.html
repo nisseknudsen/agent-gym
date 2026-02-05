@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TD Viewer</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #1a1a2e;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-family: sans-serif;
+            font-size: 24px;
+            text-align: center;
+        }
+
+        #loading .spinner {
+            width: 50px;
+            height: 50px;
+            margin: 20px auto;
+            border: 4px solid #333;
+            border-top-color: #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        #bevy-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+    </style>
+    <link data-trunk rel="rust" data-wasm-opt="z" href="../Cargo.toml" />
+    <link data-trunk rel="copy-dir" href="../assets"/>
+</head>
+<body>
+    <div id="loading">
+        <div class="spinner"></div>
+        <p>Loading TD Viewer...</p>
+    </div>
+    <canvas id="bevy-canvas"></canvas>
+    <script>
+        // Hide loading indicator when WASM is ready
+        window.addEventListener('load', function() {
+            // Give Bevy a moment to initialize
+            setTimeout(function() {
+                var loading = document.getElementById('loading');
+                if (loading) {
+                    loading.style.display = 'none';
+                }
+            }, 1000);
+        });
+    </script>
+</body>
+</html>
