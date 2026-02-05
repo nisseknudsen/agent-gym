@@ -114,7 +114,7 @@ pub struct ObserveParams {
 pub struct ObserveResult {
     // Time
     pub tick: u64,
-    pub tick_hz: u32,
+    pub ticks_per_second: u32,
 
     // Map info
     pub map_width: u16,

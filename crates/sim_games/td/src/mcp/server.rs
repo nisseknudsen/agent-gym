@@ -132,7 +132,7 @@ impl TdMcpServer {
                 "You can completely block the path, but mobs will then attack your towers to break through. This can be a valid strategy if your towers can kill mobs fast enough.".to_string(),
                 "Check gold before building. If you don't have enough, you'll get an InsufficientGold event.".to_string(),
                 "Watch the wave_status in observe to know when the next wave starts and how many mobs it will have.".to_string(),
-                "Poll events regularly to track what's happening (mob kills, tower destruction, wave starts/ends).".to_string(),
+                "Poll events every 2-5 seconds to track what's happening (mob kills, tower destruction, wave starts/ends). Do NOT poll in a tight loop.".to_string(),
             ],
         };
 
@@ -217,7 +217,7 @@ impl TdMcpServer {
     }
 
     /// Observe the current game state.
-    #[tool(description = "Get the full observation of the game state including map, entities, and wave info")]
+    #[tool(description = "Get the full observation of the game state including map, entities, and wave info. Do NOT poll this in a tight loop — calling every 2-5 seconds is sufficient.")]
     async fn observe(&self, Parameters(params): Parameters<ObserveParams>) -> Result<String, String> {
         let obs = self
             .game_server
@@ -239,7 +239,7 @@ impl TdMcpServer {
 
         Ok(serde_json::to_string(&ObserveResult {
             tick: obs.tick,
-            tick_hz: obs.tick_hz,
+            ticks_per_second: obs.tick_hz,
 
             map_width: obs.map_width,
             map_height: obs.map_height,
@@ -280,7 +280,7 @@ impl TdMcpServer {
     }
 
     /// Poll events from the game.
-    #[tool(description = "Poll events from the game starting at the given cursor position")]
+    #[tool(description = "Poll events from the game starting at the given cursor position. Do NOT poll this in a tight loop — calling every 2-5 seconds is sufficient.")]
     async fn poll_events(&self, Parameters(params): Parameters<PollEventsParams>) -> Result<String, String> {
         let (events, new_cursor) = self
             .game_server
