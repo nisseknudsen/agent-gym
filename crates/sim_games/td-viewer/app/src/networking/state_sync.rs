@@ -19,7 +19,7 @@ use serde::Deserialize;
 #[derive(Deserialize, Debug)]
 struct ObserveResponse {
     tick: u64,
-    tick_hz: u32,
+    ticks_per_second: u32,
     map_width: u16,
     map_height: u16,
     spawn: Position,
@@ -58,6 +58,7 @@ struct TowerResponse {
     x: u16,
     y: u16,
     hp: i32,
+    player_id: u8,
 }
 
 #[derive(Deserialize, Debug)]
@@ -72,6 +73,7 @@ struct PendingBuildResponse {
     x: u16,
     y: u16,
     complete_tick: u64,
+    player_id: u8,
 }
 
 #[derive(Deserialize, Debug)]
@@ -229,7 +231,7 @@ pub fn process_responses(
                 match parse_tool_result::<ObserveResponse>(&response) {
                     Ok(obs) => {
                         game_state.tick = obs.tick;
-                        game_state.tick_hz = obs.tick_hz;
+                        game_state.tick_hz = obs.ticks_per_second;
                         game_state.map_width = obs.map_width;
                         game_state.map_height = obs.map_height;
                         game_state.spawn = (obs.spawn.x, obs.spawn.y);
@@ -256,6 +258,7 @@ pub fn process_responses(
                             x: t.x,
                             y: t.y,
                             hp: t.hp,
+                            player_id: t.player_id,
                         }).collect();
                         game_state.mobs = obs.mobs.into_iter().map(|m| MobInfo {
                             x: m.x,
@@ -266,6 +269,7 @@ pub fn process_responses(
                             x: b.x,
                             y: b.y,
                             complete_tick: b.complete_tick,
+                            player_id: b.player_id,
                         }).collect();
                         game_state.initialized = true;
 
@@ -273,12 +277,22 @@ pub fn process_responses(
                     }
                     Err(e) => {
                         tracing::error!("Failed to parse observe response: {}", e);
+                        if e.contains("not found") {
+                            tracing::info!("Match no longer exists, returning to match selection");
+                            leave_spectate(&mut connection, &mut game_state, &mut events, &mut ui_state);
+                            return;
+                        }
                         connection.status = ConnectionStatus::Error(e);
                     }
                 }
             }
             Err(e) => {
                 tracing::error!("Observe request failed: {}", e);
+                if e.contains("not found") {
+                    tracing::info!("Match no longer exists, returning to match selection");
+                    leave_spectate(&mut connection, &mut game_state, &mut events, &mut ui_state);
+                    return;
+                }
                 connection.status = ConnectionStatus::Error(e);
             }
         }

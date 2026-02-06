@@ -7,8 +7,6 @@ members = [
     "crates/sim_games/td",
     "crates/sim_games/td-viewer/app",
     "crates/sim_games/td-viewer/server",
-    "tools/headless_runner",
-    "tools/multiplayer_demo",
 ]
 default-members = [
     "crates/sim_core",
@@ -16,6 +14,4 @@ default-members = [
     "crates/sim_server",
     "crates/sim_games/td",
     "crates/sim_games/td-viewer/server",
-    "tools/headless_runner",
-    "tools/multiplayer_demo",
 ]

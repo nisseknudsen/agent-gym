@@ -1,4 +1,4 @@
-use sim_core::{Micros, Speed, Tick};
+use sim_core::{Micros, PlayerId, Speed, Tick};
 use std::collections::VecDeque;
 
 #[derive(Clone, Debug)]
@@ -82,6 +82,7 @@ pub struct PendingBuild {
     pub y: u16,
     pub hp: i32,
     pub complete_tick: Tick,
+    pub player_id: PlayerId,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -95,6 +96,7 @@ pub struct Tower {
     pub y: u16,
     pub hp: i32,
     pub next_fire_tick: Tick,
+    pub player_id: PlayerId,
 }
 
 #[derive(Clone, Debug)]

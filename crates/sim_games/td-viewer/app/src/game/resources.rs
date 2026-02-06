@@ -63,6 +63,7 @@ pub struct TowerInfo {
     pub x: u16,
     pub y: u16,
     pub hp: i32,
+    pub player_id: u8,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,6 +78,7 @@ pub struct PendingBuildInfo {
     pub x: u16,
     pub y: u16,
     pub complete_tick: u64,
+    pub player_id: u8,
 }
 
 /// Connection state to the MCP server.

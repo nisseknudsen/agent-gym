@@ -180,6 +180,7 @@ pub struct TowerInfo {
     pub x: u16,
     pub y: u16,
     pub hp: i32,
+    pub player_id: u8,
 }
 
 /// Information about a mob.
@@ -196,6 +197,7 @@ pub struct PendingBuildInfo {
     pub x: u16,
     pub y: u16,
     pub complete_tick: u64,
+    pub player_id: u8,
 }
 
 /// Parameters for polling events.

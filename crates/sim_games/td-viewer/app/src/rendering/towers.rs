@@ -7,6 +7,7 @@ pub const COLOR_TOWER: Color = Color::srgba(0.3, 0.5, 0.9, 1.0);
 pub const COLOR_TOWER_HP_BG: Color = Color::srgba(0.2, 0.2, 0.2, 1.0);
 pub const COLOR_TOWER_HP_FILL: Color = Color::srgba(0.2, 0.8, 0.3, 1.0);
 pub const COLOR_PENDING_BUILD: Color = Color::srgba(0.3, 0.5, 0.9, 0.4);
+pub const COLOR_PLAYER_TEXT: Color = Color::srgba(1.0, 1.0, 1.0, 0.9);
 
 const TOWER_HP_MAX: i32 = 10; // Default tower HP
 
@@ -66,6 +67,7 @@ pub fn sync_towers(
         if !found_positions.contains(&pos) {
             let world_pos = render_config.grid_to_world(tower_info.x, tower_info.y);
             let hp_ratio = (tower_info.hp as f32 / TOWER_HP_MAX as f32).clamp(0.0, 1.0);
+            let player_id = tower_info.player_id;
 
             commands.spawn((
                 Sprite {
@@ -78,6 +80,7 @@ pub fn sync_towers(
                     grid_x: tower_info.x,
                     grid_y: tower_info.y,
                     hp: tower_info.hp,
+                    player_id,
                 },
             )).with_children(|parent: &mut ChildSpawnerCommands| {
                 // HP bar background
@@ -98,6 +101,16 @@ pub fn sync_towers(
                     },
                     bevy::sprite::Anchor::CENTER_LEFT,
                     Transform::from_translation(Vec3::new(-tower_size / 2.0, tower_size / 2.0 + 4.0, 0.2)),
+                ));
+                // Player number label
+                parent.spawn((
+                    Text2d::new(format!("{}", player_id)),
+                    TextFont {
+                        font_size: cell_size * 0.5,
+                        ..default()
+                    },
+                    TextColor(COLOR_PLAYER_TEXT),
+                    Transform::from_translation(Vec3::new(0.0, 0.0, 0.3)),
                 ));
             });
         }
@@ -169,6 +182,7 @@ pub fn sync_pending_builds(
                     grid_x: build_info.x,
                     grid_y: build_info.y,
                     complete_tick: build_info.complete_tick,
+                    player_id: build_info.player_id,
                 },
             ));
         }

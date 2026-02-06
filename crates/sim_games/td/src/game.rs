@@ -22,6 +22,7 @@ pub struct ObsTower {
     pub x: u16,
     pub y: u16,
     pub hp: i32,
+    pub player_id: PlayerId,
 }
 
 /// Mob info for observation.
@@ -38,6 +39,7 @@ pub struct ObsPendingBuild {
     pub x: u16,
     pub y: u16,
     pub complete_tick: Tick,
+    pub player_id: PlayerId,
 }
 
 /// Wave status for observation.
@@ -125,7 +127,7 @@ impl Game for TdGame {
         for action in actions {
             match &action.payload {
                 TdAction::PlaceTower { x, y, hp } => {
-                    self.try_queue_build(*x, *y, *hp, tick, out_events);
+                    self.try_queue_build(*x, *y, *hp, tick, action.player_id, out_events);
                 }
             }
         }
@@ -211,6 +213,7 @@ impl Game for TdGame {
                     x: t.x,
                     y: t.y,
                     hp: t.hp,
+                    player_id: t.player_id,
                 })
                 .collect(),
             mobs: self
@@ -232,6 +235,7 @@ impl Game for TdGame {
                     x: b.x,
                     y: b.y,
                     complete_tick: b.complete_tick,
+                    player_id: b.player_id,
                 })
                 .collect(),
         }
@@ -263,6 +267,7 @@ impl TdGame {
         y: u16,
         hp: i32,
         tick: Tick,
+        player_id: PlayerId,
         out_events: &mut Vec<TdEvent>,
     ) -> bool {
         // Reject if out of bounds
@@ -306,6 +311,7 @@ impl TdGame {
             y,
             hp,
             complete_tick,
+            player_id,
         });
 
         out_events.push(TdEvent::BuildQueued { x, y });
@@ -323,6 +329,7 @@ impl TdGame {
                     y: build.y,
                     hp: build.hp,
                     next_fire_tick: tick,
+                    player_id: build.player_id,
                 });
                 out_events.push(TdEvent::TowerPlaced { x: build.x, y: build.y });
                 towers_placed = true;

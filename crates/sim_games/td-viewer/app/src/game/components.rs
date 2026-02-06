@@ -8,6 +8,7 @@ pub struct Tower {
     pub grid_x: u16,
     pub grid_y: u16,
     pub hp: i32,
+    pub player_id: u8,
 }
 
 /// Marker component for mob entities.
@@ -27,6 +28,7 @@ pub struct PendingBuild {
     pub grid_x: u16,
     pub grid_y: u16,
     pub complete_tick: u64,
+    pub player_id: u8,
 }
 
 /// Marker for the spawn cell.

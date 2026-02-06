@@ -264,6 +264,7 @@ impl TdMcpServer {
                 x: t.x,
                 y: t.y,
                 hp: t.hp,
+                player_id: t.player_id,
             }).collect(),
             mobs: obs.mobs.into_iter().map(|m| MobInfo {
                 x: m.x,
@@ -274,6 +275,7 @@ impl TdMcpServer {
                 x: b.x,
                 y: b.y,
                 complete_tick: b.complete_tick,
+                player_id: b.player_id,
             }).collect(),
         })
         .unwrap())
