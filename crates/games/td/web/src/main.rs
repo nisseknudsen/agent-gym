@@ -30,7 +30,7 @@ struct Args {
     port: u16,
 
     /// Directory containing static files (WASM app)
-    #[arg(short, long, default_value = "crates/sim_games/td-viewer/app/dist")]
+    #[arg(short, long, default_value = "crates/games/td/viewer/dist")]
     static_dir: PathBuf,
 
     /// MCP server URL to proxy to
@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check if static dir exists
     if !args.static_dir.exists() {
         tracing::warn!(
-            "Static directory {:?} does not exist. Run `trunk build` in td-viewer/app first.",
+            "Static directory {:?} does not exist. Run `trunk build` in crates/games/td/viewer first.",
             args.static_dir
         );
     }

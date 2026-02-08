@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sim_core = { path = "../../sim_core" }
-sim_server = { path = "../../sim_server" }
+sim_core = { path = "../../../core" }
+sim_server = { path = "../../../server" }
 
 # MCP dependencies
 rmcp = { version = "0.14", features = [

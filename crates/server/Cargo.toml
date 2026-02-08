@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sim_core = { path = "../sim_core" }
-sim_host = { path = "../sim_host" }
+sim_core = { path = "../core" }
+sim_host = { path = "../host" }
 tokio = { version = "1", features = ["rt", "time", "sync"] }
 
 [dev-dependencies]

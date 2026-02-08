@@ -1,17 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/sim_core",
-    "crates/sim_host",
-    "crates/sim_server",
-    "crates/sim_games/td",
-    "crates/sim_games/td-viewer/app",
-    "crates/sim_games/td-viewer/server",
+    "crates/core",
+    "crates/host",
+    "crates/server",
+    "crates/games/td/sim",
+    "crates/games/td/viewer",
+    "crates/games/td/web",
 ]
 default-members = [
-    "crates/sim_core",
-    "crates/sim_host",
-    "crates/sim_server",
-    "crates/sim_games/td",
-    "crates/sim_games/td-viewer/server",
+    "crates/core",
+    "crates/host",
+    "crates/server",
+    "crates/games/td/sim",
+    "crates/games/td/web",
 ]

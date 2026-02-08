@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sim_core = { path = "../sim_core" }
+sim_core = { path = "../core" }
