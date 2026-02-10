@@ -91,7 +91,17 @@ pub struct SubmitActionParams {
 #[serde(tag = "type")]
 pub enum ActionParams {
     /// Place a tower at the given coordinates.
-    PlaceTower { x: u16, y: u16 },
+    PlaceTower {
+        x: u16,
+        y: u16,
+        /// Tower type. Defaults to "Basic".
+        #[serde(default = "default_tower_type")]
+        tower_type: String,
+    },
+}
+
+fn default_tower_type() -> String {
+    "Basic".to_string()
 }
 
 /// Result of submitting an action.
@@ -180,6 +190,7 @@ pub struct TowerInfo {
     pub x: u16,
     pub y: u16,
     pub hp: i32,
+    pub tower_type: String,
     pub player_id: u8,
 }
 
@@ -196,6 +207,7 @@ pub struct MobInfo {
 pub struct PendingBuildInfo {
     pub x: u16,
     pub y: u16,
+    pub tower_type: String,
     pub complete_tick: u64,
     pub player_id: u8,
 }
@@ -229,14 +241,13 @@ pub struct GameEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type")]
 pub enum EventData {
-    TowerPlaced { x: u16, y: u16 },
+    TowerPlaced { x: u16, y: u16, tower_type: String },
     TowerDestroyed { x: u16, y: u16 },
     MobLeaked,
     MobKilled { x: u16, y: u16 },
     WaveStarted { wave: u8 },
     WaveEnded { wave: u8 },
-    BuildQueued { x: u16, y: u16 },
-    BuildStarted { x: u16, y: u16 },
+    BuildQueued { x: u16, y: u16, tower_type: String },
     InsufficientGold { cost: u32, have: u32 },
 }
 
@@ -280,92 +291,75 @@ pub struct ListMatchesResult {
 /// Game rules and mechanics explanation.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RulesResult {
-    /// Name of the game.
     pub game: String,
-    /// Brief description of the game objective.
     pub objective: String,
-    /// How to win the game.
     pub win_condition: String,
-    /// How to lose the game.
     pub lose_condition: String,
-    /// Description of the map layout.
     pub map: MapRules,
-    /// How towers work.
     pub towers: TowerRules,
-    /// How mobs work.
     pub mobs: MobRules,
-    /// How waves work.
     pub waves: WaveRules,
-    /// Economy rules.
     pub economy: EconomyRules,
-    /// Available actions the agent can take.
     pub actions: Vec<ActionRule>,
-    /// Strategic tips.
     pub tips: Vec<String>,
 }
 
 /// Map layout rules.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MapRules {
-    /// Description of the map.
     pub description: String,
-    /// Default map dimensions.
     pub default_size: String,
-    /// Where mobs spawn.
     pub spawn_description: String,
-    /// Where mobs try to reach.
     pub goal_description: String,
 }
 
 /// Tower mechanics.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TowerRules {
-    /// How towers are placed.
     pub placement: String,
-    /// How towers attack.
     pub attack: String,
-    /// What happens when towers are damaged.
     pub destruction: String,
+    pub tower_types: Vec<TowerTypeInfo>,
+}
+
+/// Info about a tower type.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TowerTypeInfo {
+    pub name: String,
+    pub cost: u32,
+    pub hp: i32,
+    pub range: u16,
+    pub damage: i32,
+    pub description: String,
 }
 
 /// Mob mechanics.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MobRules {
-    /// How mobs move.
     pub movement: String,
-    /// What happens when mobs reach the goal.
     pub leaking: String,
-    /// How mobs interact with towers.
     pub combat: String,
 }
 
 /// Wave mechanics.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WaveRules {
-    /// How waves progress.
     pub progression: String,
-    /// Time between waves.
     pub pause_between: String,
-    /// How wave difficulty scales.
     pub scaling: String,
 }
 
 /// Economy rules.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EconomyRules {
-    /// How gold is earned.
     pub income: String,
-    /// What gold is spent on.
     pub spending: String,
 }
 
 /// Description of an available action.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ActionRule {
-    /// Action name.
     pub name: String,
-    /// What the action does.
     pub description: String,
-    /// Parameters for the action.
     pub parameters: String,
 }

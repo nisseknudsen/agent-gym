@@ -1,7 +1,8 @@
 use super::types::*;
-use crate::game::{ObsWaveStatus, TdEvent};
 use crate::actions::TdAction;
-use crate::state::TdConfig;
+use crate::config::{TdConfig, TowerKind};
+use crate::events::TdEvent;
+use crate::observe::ObsWaveStatus;
 use crate::TdGame;
 use rmcp::{
     ServerHandler,
@@ -37,11 +38,26 @@ impl TdMcpServer {
     }
 }
 
+fn kind_to_string(kind: TowerKind) -> String {
+    match kind {
+        TowerKind::Basic => "Basic".to_string(),
+    }
+}
+
+fn string_to_kind(s: &str) -> TowerKind {
+    match s {
+        _ => TowerKind::Basic,
+    }
+}
+
 #[tool_router]
 impl TdMcpServer {
     /// Create a new Tower Defense match.
     #[tool(description = "Create a new Tower Defense match with the specified seed and player count")]
-    async fn create_match(&self, Parameters(params): Parameters<CreateMatchParams>) -> Result<String, String> {
+    async fn create_match(
+        &self,
+        Parameters(params): Parameters<CreateMatchParams>,
+    ) -> Result<String, String> {
         let game_config = TdConfig {
             tick_hz: 20,
             waves_total: params.waves,
@@ -101,8 +117,18 @@ impl TdMcpServer {
             },
             towers: TowerRules {
                 placement: "Use submit_action with PlaceTower to queue a tower build. Costs gold and takes build_time_ticks to complete. Cell is blocked immediately when build starts.".to_string(),
-                attack: "Towers automatically attack the nearest mob within range every tower_fire_period. They deal tower_damage per hit.".to_string(),
+                attack: "Towers automatically attack the nearest mob within range every fire_period. They deal damage per hit.".to_string(),
                 destruction: "Mobs attack adjacent towers. When a tower's HP reaches 0, it is destroyed and the cell becomes unblocked.".to_string(),
+                tower_types: vec![
+                    TowerTypeInfo {
+                        name: "Basic".to_string(),
+                        cost: 15,
+                        hp: 100,
+                        range: 3,
+                        damage: 5,
+                        description: "Standard attack tower. Fires at the nearest mob in range.".to_string(),
+                    },
+                ],
             },
             mobs: MobRules {
                 movement: "Mobs spawn during waves and pathfind toward the goal, moving around towers. They take the shortest available path. If the path is completely blocked, mobs will attack towers in their way to create a path.".to_string(),
@@ -122,7 +148,7 @@ impl TdMcpServer {
                 ActionRule {
                     name: "PlaceTower".to_string(),
                     description: "Queue a tower to be built at the specified coordinates.".to_string(),
-                    parameters: "x: u16, y: u16 - grid coordinates. Must be within map bounds and not already blocked.".to_string(),
+                    parameters: "x: u16, y: u16 - grid coordinates. tower_type: string (optional, default 'Basic').".to_string(),
                 },
             ],
             tips: vec![
@@ -141,7 +167,10 @@ impl TdMcpServer {
 
     /// Terminate a match.
     #[tool(description = "Terminate an active match")]
-    async fn terminate_match(&self, Parameters(params): Parameters<TerminateMatchParams>) -> Result<String, String> {
+    async fn terminate_match(
+        &self,
+        Parameters(params): Parameters<TerminateMatchParams>,
+    ) -> Result<String, String> {
         self.game_server
             .terminate_match(params.match_id)
             .await
@@ -152,7 +181,10 @@ impl TdMcpServer {
 
     /// Spectate a match (read-only session).
     #[tool(description = "Spectate a match as a read-only viewer. Returns a session token that can observe and poll events but cannot submit actions.")]
-    async fn spectate_match(&self, Parameters(params): Parameters<SpectateMatchParams>) -> Result<String, String> {
+    async fn spectate_match(
+        &self,
+        Parameters(params): Parameters<SpectateMatchParams>,
+    ) -> Result<String, String> {
         let session = self
             .game_server
             .spectate_match(params.match_id)
@@ -167,7 +199,10 @@ impl TdMcpServer {
 
     /// Join a match as a new player.
     #[tool(description = "Join a match as a new player. Returns a session token and player ID.")]
-    async fn join_match(&self, Parameters(params): Parameters<JoinMatchParams>) -> Result<String, String> {
+    async fn join_match(
+        &self,
+        Parameters(params): Parameters<JoinMatchParams>,
+    ) -> Result<String, String> {
         let (session, player_id) = self
             .game_server
             .join_match(params.match_id)
@@ -183,7 +218,10 @@ impl TdMcpServer {
 
     /// Leave a match.
     #[tool(description = "Leave a match")]
-    async fn leave_match(&self, Parameters(params): Parameters<LeaveMatchParams>) -> Result<String, String> {
+    async fn leave_match(
+        &self,
+        Parameters(params): Parameters<LeaveMatchParams>,
+    ) -> Result<String, String> {
         self.game_server
             .leave_match(params.match_id, SessionToken(params.session_token))
             .await
@@ -194,12 +232,18 @@ impl TdMcpServer {
 
     /// Submit an action to the game.
     #[tool(description = "Submit an action (e.g., place a tower). If intended_tick is not provided or has passed, executes on the next tick. Returns the actual scheduled tick.")]
-    async fn submit_action(&self, Parameters(params): Parameters<SubmitActionParams>) -> Result<String, String> {
+    async fn submit_action(
+        &self,
+        Parameters(params): Parameters<SubmitActionParams>,
+    ) -> Result<String, String> {
         let action = match params.action {
-            ActionParams::PlaceTower { x, y } => TdAction::PlaceTower { x, y, hp: 100 },
+            ActionParams::PlaceTower { x, y, tower_type } => TdAction::PlaceTower {
+                x,
+                y,
+                kind: string_to_kind(&tower_type),
+            },
         };
 
-        // Use intended_tick if provided, otherwise 0 (will be scheduled for next tick)
         let intended_tick = params.intended_tick.unwrap_or(0);
 
         let (action_id, scheduled_tick) = self
@@ -213,12 +257,19 @@ impl TdMcpServer {
             .await
             .map_err(|e| format!("Failed to submit action: {}", e))?;
 
-        Ok(serde_json::to_string(&SubmitActionResult { action_id, scheduled_tick }).unwrap())
+        Ok(serde_json::to_string(&SubmitActionResult {
+            action_id,
+            scheduled_tick,
+        })
+        .unwrap())
     }
 
     /// Observe the current game state.
     #[tool(description = "Get the full observation of the game state including map, entities, and wave info. Do NOT poll this in a tight loop — calling every 2-5 seconds is sufficient.")]
-    async fn observe(&self, Parameters(params): Parameters<ObserveParams>) -> Result<String, String> {
+    async fn observe(
+        &self,
+        Parameters(params): Parameters<ObserveParams>,
+    ) -> Result<String, String> {
         let obs = self
             .game_server
             .observe(params.match_id, SessionToken(params.session_token))
@@ -226,11 +277,18 @@ impl TdMcpServer {
             .map_err(|e| format!("Failed to observe: {}", e))?;
 
         let wave_status = match obs.wave_status {
-            ObsWaveStatus::Pause { until_tick, next_wave_size } => WaveStatus::Pause {
+            ObsWaveStatus::Pause {
+                until_tick,
+                next_wave_size,
+            } => WaveStatus::Pause {
                 until_tick,
                 next_wave_size,
             },
-            ObsWaveStatus::InWave { spawned, wave_size, next_spawn_tick } => WaveStatus::InWave {
+            ObsWaveStatus::InWave {
+                spawned,
+                wave_size,
+                next_spawn_tick,
+            } => WaveStatus::InWave {
                 spawned,
                 wave_size,
                 next_spawn_tick,
@@ -243,8 +301,14 @@ impl TdMcpServer {
 
             map_width: obs.map_width,
             map_height: obs.map_height,
-            spawn: Position { x: obs.spawn.0, y: obs.spawn.1 },
-            goal: Position { x: obs.goal.0, y: obs.goal.1 },
+            spawn: Position {
+                x: obs.spawn.0,
+                y: obs.spawn.1,
+            },
+            goal: Position {
+                x: obs.goal.0,
+                y: obs.goal.1,
+            },
 
             max_leaks: obs.max_leaks,
             tower_cost: obs.tower_cost,
@@ -260,30 +324,47 @@ impl TdMcpServer {
             waves_total: obs.waves_total,
             wave_status,
 
-            towers: obs.towers.into_iter().map(|t| TowerInfo {
-                x: t.x,
-                y: t.y,
-                hp: t.hp,
-                player_id: t.player_id,
-            }).collect(),
-            mobs: obs.mobs.into_iter().map(|m| MobInfo {
-                x: m.x,
-                y: m.y,
-                hp: m.hp,
-            }).collect(),
-            build_queue: obs.build_queue.into_iter().map(|b| PendingBuildInfo {
-                x: b.x,
-                y: b.y,
-                complete_tick: b.complete_tick,
-                player_id: b.player_id,
-            }).collect(),
+            towers: obs
+                .towers
+                .into_iter()
+                .map(|t| TowerInfo {
+                    x: t.x,
+                    y: t.y,
+                    hp: t.hp,
+                    tower_type: kind_to_string(t.kind),
+                    player_id: t.player_id,
+                })
+                .collect(),
+            mobs: obs
+                .mobs
+                .into_iter()
+                .map(|m| MobInfo {
+                    x: m.x,
+                    y: m.y,
+                    hp: m.hp,
+                })
+                .collect(),
+            build_queue: obs
+                .build_queue
+                .into_iter()
+                .map(|b| PendingBuildInfo {
+                    x: b.x,
+                    y: b.y,
+                    tower_type: kind_to_string(b.kind),
+                    complete_tick: b.complete_tick,
+                    player_id: b.player_id,
+                })
+                .collect(),
         })
         .unwrap())
     }
 
     /// Poll events from the game.
     #[tool(description = "Poll events from the game starting at the given cursor position. Do NOT poll this in a tight loop — calling every 2-5 seconds is sufficient.")]
-    async fn poll_events(&self, Parameters(params): Parameters<PollEventsParams>) -> Result<String, String> {
+    async fn poll_events(
+        &self,
+        Parameters(params): Parameters<PollEventsParams>,
+    ) -> Result<String, String> {
         let (events, new_cursor) = self
             .game_server
             .poll_events(
@@ -312,7 +393,10 @@ impl TdMcpServer {
 
     /// Get the current tick of a match.
     #[tool(description = "Get the current tick number of a match")]
-    async fn current_tick(&self, Parameters(params): Parameters<CurrentTickParams>) -> Result<String, String> {
+    async fn current_tick(
+        &self,
+        Parameters(params): Parameters<CurrentTickParams>,
+    ) -> Result<String, String> {
         let tick = self
             .game_server
             .current_tick(params.match_id)
@@ -325,14 +409,21 @@ impl TdMcpServer {
 
 fn convert_event(event: TdEvent) -> EventData {
     match event {
-        TdEvent::TowerPlaced { x, y } => EventData::TowerPlaced { x, y },
-        TdEvent::TowerDestroyed { x, y } => EventData::TowerDestroyed { x, y },
-        TdEvent::MobLeaked => EventData::MobLeaked,
-        TdEvent::MobKilled { x, y } => EventData::MobKilled { x, y },
+        TdEvent::TowerPlaced { x, y, kind, .. } => EventData::TowerPlaced {
+            x,
+            y,
+            tower_type: kind_to_string(kind),
+        },
+        TdEvent::TowerDestroyed { x, y, .. } => EventData::TowerDestroyed { x, y },
+        TdEvent::MobLeaked { .. } => EventData::MobLeaked,
+        TdEvent::MobKilled { x, y, .. } => EventData::MobKilled { x, y },
         TdEvent::WaveStarted { wave } => EventData::WaveStarted { wave },
         TdEvent::WaveEnded { wave } => EventData::WaveEnded { wave },
-        TdEvent::BuildQueued { x, y } => EventData::BuildQueued { x, y },
-        TdEvent::BuildStarted { x, y } => EventData::BuildStarted { x, y },
+        TdEvent::BuildQueued { x, y, kind } => EventData::BuildQueued {
+            x,
+            y,
+            tower_type: kind_to_string(kind),
+        },
         TdEvent::InsufficientGold { cost, have } => EventData::InsufficientGold { cost, have },
     }
 }
@@ -341,7 +432,7 @@ impl ServerHandler for TdMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Tower Defense MCP Server. Create matches, join as players, place towers, and defend against waves of mobs!".into()
+                "Tower Defense MCP Server. Create matches, join as players, place towers (Basic or Wall), and defend against waves of mobs!".into()
             ),
             capabilities: ServerCapabilities::builder()
                 .enable_tools()
@@ -354,7 +445,9 @@ impl ServerHandler for TdMcpServer {
         &self,
         _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> impl std::future::Future<Output = Result<rmcp::model::ListToolsResult, rmcp::ErrorData>> + Send + '_ {
+    ) -> impl std::future::Future<Output = Result<rmcp::model::ListToolsResult, rmcp::ErrorData>>
+           + Send
+           + '_ {
         let tools = self.tool_router.list_all();
         std::future::ready(Ok(rmcp::model::ListToolsResult {
             tools,
@@ -366,7 +459,8 @@ impl ServerHandler for TdMcpServer {
         &self,
         request: rmcp::model::CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> impl std::future::Future<Output = Result<CallToolResult, rmcp::ErrorData>> + Send + '_ {
+    ) -> impl std::future::Future<Output = Result<CallToolResult, rmcp::ErrorData>> + Send + '_
+    {
         async move {
             let tool_context = rmcp::handler::server::tool::ToolCallContext::new(
                 self,

@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 sim_core = { path = "../../../core" }
 sim_server = { path = "../../../server" }
+slotmap = "1"
 
 # MCP dependencies
 rmcp = { version = "0.14", features = [

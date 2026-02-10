@@ -4289,6 +4289,7 @@ dependencies = [
  "serde_json",
  "sim_core",
  "sim_server",
+ "slotmap",
  "tokio",
  "tracing",
  "tracing-subscriber",
