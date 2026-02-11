@@ -39,6 +39,9 @@ pub struct ServerEvent<E> {
 pub struct ServerConfig {
     /// Default tick rate for matches (ticks per second).
     pub default_tick_hz: u32,
+    /// How often to publish observations for MCP agents (decisions per second).
+    /// Observers using `observe_next` will be notified at this frequency.
+    pub decision_hz: u32,
     /// Maximum number of concurrent matches.
     pub max_matches: usize,
     /// Capacity of the event buffer per match.
@@ -49,6 +52,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             default_tick_hz: 20,
+            decision_hz: 4,
             max_matches: 100,
             event_buffer_capacity: 1024,
         }

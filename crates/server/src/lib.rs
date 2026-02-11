@@ -5,7 +5,7 @@ pub mod server;
 pub mod tick_loop;
 pub mod types;
 
-pub use errors::{CreateMatchError, JoinError, MatchError, SubmitError};
+pub use errors::{CreateMatchError, JoinError, MatchError, ObserveNextError, SubmitError};
 pub use events::EventBuffer;
 pub use match_handle::MatchHandle;
 pub use server::GameServer;

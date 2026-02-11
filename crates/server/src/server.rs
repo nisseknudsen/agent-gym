@@ -1,4 +1,4 @@
-use crate::errors::{CreateMatchError, JoinError, MatchError, SubmitError};
+use crate::errors::{CreateMatchError, JoinError, MatchError, ObserveNextError, SubmitError};
 use crate::match_handle::MatchHandle;
 use crate::tick_loop::spawn_tick_loop;
 use crate::types::{EventCursor, MatchInfo, ServerConfig, ServerEvent, SessionToken};
@@ -76,6 +76,7 @@ where
             host,
             self.config.event_buffer_capacity,
             required_players,
+            self.config.decision_hz,
         );
 
         let task = spawn_tick_loop(handle.clone());
@@ -201,6 +202,24 @@ where
             .observe(session)
             .await
             .ok_or(MatchError::InvalidSession)
+    }
+
+    /// Wait for the next decision tick observation (long-poll).
+    /// Returns (observation, timed_out).
+    pub async fn observe_next(
+        &self,
+        match_id: MatchId,
+        session: SessionToken,
+        after_tick: Tick,
+        max_wait_ms: u64,
+    ) -> Result<(G::Observation, bool), ObserveNextError> {
+        let handle = {
+            let matches = self.matches.read().await;
+            let entry = matches.get(&match_id).ok_or(ObserveNextError::NotFound)?;
+            entry.handle.clone()
+        };
+
+        handle.observe_next(session, after_tick, max_wait_ms).await
     }
 
     /// Poll events from the given cursor.

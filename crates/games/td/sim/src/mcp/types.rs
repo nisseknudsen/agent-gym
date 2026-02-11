@@ -95,11 +95,20 @@ pub struct ActionResult {
     pub scheduled_tick: u64,
 }
 
-/// Parameters for observing game state.
+/// Parameters for observe_next (long-poll observation).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ObserveParams {
+pub struct ObserveNextParams {
     pub match_id: u64,
     pub session_token: u64,
+    /// Last tick you observed. Returns when a tick > this is available. Use 0 for the first call.
+    pub after_tick: u64,
+    /// Max time to wait in milliseconds (default: 5000).
+    #[serde(default = "default_max_wait")]
+    pub max_wait_ms: u64,
+}
+
+fn default_max_wait() -> u64 {
+    5000
 }
 
 /// Observation of the current game state.
@@ -130,6 +139,16 @@ pub struct ObserveResult {
     pub towers: Vec<TowerInfo>,
     pub mobs: Vec<MobInfo>,
     pub build_queue: Vec<PendingBuildInfo>,
+}
+
+/// Result of observe_next (long-poll observation).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ObserveNextResult {
+    /// Whether this was a timeout (returned current state rather than waiting for next decision tick).
+    pub timed_out: bool,
+    /// The full game state observation.
+    #[serde(flatten)]
+    pub observation: ObserveResult,
 }
 
 /// Position on the map.

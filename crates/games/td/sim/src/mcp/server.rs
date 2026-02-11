@@ -10,7 +10,7 @@ use rmcp::{
     model::{CallToolResult, ServerCapabilities, ServerInfo},
     tool, tool_router,
 };
-use sim_server::{GameServer, MatchStatus, ServerConfig, SessionToken};
+use sim_server::{GameServer, MatchStatus, ObserveNextError, ServerConfig, SessionToken};
 use slotmap::{Key, KeyData};
 use std::sync::Arc;
 
@@ -31,6 +31,7 @@ impl TdMcpServer {
     pub fn with_default_config() -> Self {
         let config = ServerConfig {
             default_tick_hz: 20,
+            decision_hz: 4,
             max_matches: 100,
             event_buffer_capacity: 1024,
         };
@@ -59,6 +60,88 @@ fn string_to_tower_id(s: &str) -> Result<TowerId, String> {
     let ffi: u64 = s.parse().map_err(|_| format!("Invalid tower_id: {}", s))?;
     let key_data = KeyData::from_ffi(ffi);
     Ok(TowerId::from(key_data))
+}
+
+fn transform_obs(obs: crate::observe::TdObservation) -> ObserveResult {
+    let wave_status = match obs.wave_status {
+        ObsWaveStatus::Pause {
+            until_tick,
+            next_wave_size,
+        } => WaveStatus::Pause {
+            until_tick,
+            next_wave_size,
+        },
+        ObsWaveStatus::InWave {
+            spawned,
+            wave_size,
+            next_spawn_tick,
+        } => WaveStatus::InWave {
+            spawned,
+            wave_size,
+            next_spawn_tick,
+        },
+    };
+
+    ObserveResult {
+        tick: obs.tick,
+        ticks_per_second: obs.tick_hz,
+        map_width: obs.map_width,
+        map_height: obs.map_height,
+        spawn: Position {
+            x: obs.spawn.0,
+            y: obs.spawn.1,
+        },
+        goal: Position {
+            x: obs.goal.0,
+            y: obs.goal.1,
+        },
+        max_leaks: obs.max_leaks,
+        tower_cost: obs.tower_cost,
+        tower_range: obs.tower_range,
+        tower_damage: obs.tower_damage,
+        build_time_ticks: obs.build_time_ticks,
+        gold_per_mob_kill: obs.gold_per_mob_kill,
+        gold: obs.gold,
+        leaks: obs.leaks,
+        current_wave: obs.current_wave,
+        waves_total: obs.waves_total,
+        wave_status,
+        towers: obs
+            .towers
+            .into_iter()
+            .map(|t| TowerInfo {
+                id: tower_id_to_string(t.id),
+                x: t.x,
+                y: t.y,
+                hp: t.hp,
+                tower_type: kind_to_string(t.kind),
+                player_id: t.player_id,
+                upgrade_level: t.upgrade_level,
+                damage: t.damage,
+                upgrade_cost: t.upgrade_cost,
+            })
+            .collect(),
+        mobs: obs
+            .mobs
+            .into_iter()
+            .map(|m| MobInfo {
+                x: m.x,
+                y: m.y,
+                hp: m.hp,
+            })
+            .collect(),
+        build_queue: obs
+            .build_queue
+            .into_iter()
+            .map(|b| PendingBuildInfo {
+                x: b.x,
+                y: b.y,
+                tower_type: kind_to_string(b.kind),
+                complete_tick: b.complete_tick,
+                player_id: b.player_id,
+            })
+            .collect(),
+    }
 }
 
 #[tool_router]
@@ -117,7 +200,7 @@ impl TdMcpServer {
     async fn rules(&self) -> Result<String, String> {
         let rules = RulesResult {
             game: "Tower Defense".to_string(),
-            objective: "Defend your base by building towers to stop waves of mobs from reaching the goal. Survive all waves to win.".to_string(),
+            objective: "Defend your base by building towers to stop waves of mobs from reaching the goal. Survive all waves to win. (NOTE: You are observing only - the simulation runs at a fixed rate regardless of your calls)".to_string(),
             win_condition: "Complete all waves without exceeding the maximum number of leaks (mobs reaching the goal).".to_string(),
             lose_condition: "If more than max_leaks mobs reach the goal, you lose.".to_string(),
             map: MapRules {
@@ -168,13 +251,16 @@ impl TdMcpServer {
                 },
             ],
             tips: vec![
-                "Use the observe tool to see current game state including tower upgrade levels, costs, and damage.".to_string(),
+                "*** CRITICAL: observe_next is READ-ONLY and DOES NOT CONTROL the simulation. The server ticks at a fixed rate regardless of your calls ***".to_string(),
+                "*** Calling observe_next faster/slower does NOT speed up/slow down the game. You are only polling for state ***".to_string(),
+                "Use observe_next to stream game state updates. Pass after_tick=0 for the first call.".to_string(),
+                "IMPORTANT: Always pass the tick value from the previous response. If you repeat the same after_tick, you WILL be forced to wait - this prevents spam.".to_string(),
+                "Your actions (place_tower, upgrade_tower) are independent of observe_next - submit them with intended_tick and the server will execute them.".to_string(),
                 "Build towers near the mob path to maximize damage. Mobs walk in a straight line from spawn to goal unless blocked.".to_string(),
                 "Place towers to create a maze - mobs will pathfind around them, giving towers more time to attack.".to_string(),
                 "Upgrade existing towers for more damage rather than always building new ones. Upgraded towers are more gold-efficient.".to_string(),
                 "Tower build cost increases each wave, so building early is cheaper.".to_string(),
-                "Watch the wave_status in observe to know when the next wave starts and how many mobs it will have.".to_string(),
-                "Call observe every 2-5 seconds to track the full game state. Do NOT poll in a tight loop.".to_string(),
+                "Watch the wave_status in observe_next to know when the next wave starts and how many mobs it will have.".to_string(),
             ],
         };
 
@@ -303,103 +389,39 @@ impl TdMcpServer {
         .unwrap())
     }
 
-    /// Observe the current game state.
-    #[tool(description = "Get the full observation of the game state including map, entities, tower upgrade levels, and wave info. Do NOT poll this in a tight loop — calling every 2-5 seconds is sufficient.")]
-    async fn observe(
+    /// Wait for the next game state update (long-poll).
+    #[tool(description = "Wait for game state observation. IMPORTANT: You MUST pass the tick from the previous response as after_tick, otherwise you will be forced to wait for new data (anti-spam). Use after_tick=0 for first call, then always pass the returned tick.")]
+    async fn observe_next(
         &self,
-        Parameters(params): Parameters<ObserveParams>,
+        Parameters(params): Parameters<ObserveNextParams>,
     ) -> Result<String, String> {
-        let obs = self
+        let (obs, timed_out) = self
             .game_server
-            .observe(params.match_id, SessionToken(params.session_token))
+            .observe_next(
+                params.match_id,
+                SessionToken(params.session_token),
+                params.after_tick,
+                params.max_wait_ms,
+            )
             .await
-            .map_err(|e| format!("Failed to observe: {}", e))?;
+            .map_err(|e| match e {
+                ObserveNextError::NotFound => "Match not found".to_string(),
+                ObserveNextError::InvalidSession => "Invalid session".to_string(),
+                ObserveNextError::AlreadyWaiting => {
+                    "Already waiting for observation. Only one observe_next allowed at a time."
+                        .to_string()
+                }
+                ObserveNextError::ObservationNotReady => {
+                    "Observation not ready yet".to_string()
+                }
+            })?;
 
-        let wave_status = match obs.wave_status {
-            ObsWaveStatus::Pause {
-                until_tick,
-                next_wave_size,
-            } => WaveStatus::Pause {
-                until_tick,
-                next_wave_size,
-            },
-            ObsWaveStatus::InWave {
-                spawned,
-                wave_size,
-                next_spawn_tick,
-            } => WaveStatus::InWave {
-                spawned,
-                wave_size,
-                next_spawn_tick,
-            },
+        let result = ObserveNextResult {
+            timed_out,
+            observation: transform_obs(obs),
         };
 
-        Ok(serde_json::to_string(&ObserveResult {
-            tick: obs.tick,
-            ticks_per_second: obs.tick_hz,
-
-            map_width: obs.map_width,
-            map_height: obs.map_height,
-            spawn: Position {
-                x: obs.spawn.0,
-                y: obs.spawn.1,
-            },
-            goal: Position {
-                x: obs.goal.0,
-                y: obs.goal.1,
-            },
-
-            max_leaks: obs.max_leaks,
-            tower_cost: obs.tower_cost,
-            tower_range: obs.tower_range,
-            tower_damage: obs.tower_damage,
-            build_time_ticks: obs.build_time_ticks,
-            gold_per_mob_kill: obs.gold_per_mob_kill,
-
-            gold: obs.gold,
-            leaks: obs.leaks,
-
-            current_wave: obs.current_wave,
-            waves_total: obs.waves_total,
-            wave_status,
-
-            towers: obs
-                .towers
-                .into_iter()
-                .map(|t| TowerInfo {
-                    id: tower_id_to_string(t.id),
-                    x: t.x,
-                    y: t.y,
-                    hp: t.hp,
-                    tower_type: kind_to_string(t.kind),
-                    player_id: t.player_id,
-                    upgrade_level: t.upgrade_level,
-                    damage: t.damage,
-                    upgrade_cost: t.upgrade_cost,
-                })
-                .collect(),
-            mobs: obs
-                .mobs
-                .into_iter()
-                .map(|m| MobInfo {
-                    x: m.x,
-                    y: m.y,
-                    hp: m.hp,
-                })
-                .collect(),
-            build_queue: obs
-                .build_queue
-                .into_iter()
-                .map(|b| PendingBuildInfo {
-                    x: b.x,
-                    y: b.y,
-                    tower_type: kind_to_string(b.kind),
-                    complete_tick: b.complete_tick,
-                    player_id: b.player_id,
-                })
-                .collect(),
-        })
-        .unwrap())
+        Ok(serde_json::to_string(&result).unwrap())
     }
 
 }

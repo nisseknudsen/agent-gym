@@ -81,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Shared game server
     let config = ServerConfig {
         default_tick_hz: 20,
+        decision_hz: 4,
         max_matches: 100,
         event_buffer_capacity: 1024,
     };

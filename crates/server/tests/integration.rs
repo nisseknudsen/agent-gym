@@ -1,6 +1,6 @@
 use sim_core::{ActionEnvelope, Game, PlayerId, TerminalOutcome, Tick};
 use sim_server::{EventCursor, GameServer, MatchStatus, ServerConfig};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
 /// A simple counter game for testing.
@@ -88,6 +88,7 @@ impl Game for CounterGame {
 async fn test_create_and_list_matches() {
     let config = ServerConfig {
         default_tick_hz: 100, // Fast for testing
+        decision_hz: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -112,6 +113,7 @@ async fn test_create_and_list_matches() {
 async fn test_join_and_observe() {
     let config = ServerConfig {
         default_tick_hz: 100,
+        decision_hz: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -141,6 +143,7 @@ async fn test_join_and_observe() {
 async fn test_submit_action_and_poll_events() {
     let config = ServerConfig {
         default_tick_hz: 100,
+        decision_hz: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -197,6 +200,7 @@ async fn test_submit_action_and_poll_events() {
 async fn test_game_terminates() {
     let config = ServerConfig {
         default_tick_hz: 100,
+        decision_hz: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -237,6 +241,7 @@ async fn test_game_terminates() {
 async fn test_terminate_match() {
     let config = ServerConfig {
         default_tick_hz: 100,
+        decision_hz: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -262,6 +267,7 @@ async fn test_terminate_match() {
 async fn test_multiple_players() {
     let config = ServerConfig {
         default_tick_hz: 100,
+        decision_hz: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -311,6 +317,7 @@ async fn test_multiple_players() {
 async fn test_determinism() {
     let config = ServerConfig {
         default_tick_hz: 100,
+        decision_hz: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -368,6 +375,7 @@ async fn test_determinism() {
 async fn test_leave_match() {
     let config = ServerConfig {
         default_tick_hz: 100,
+        decision_hz: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -395,6 +403,7 @@ async fn test_leave_match() {
 async fn test_max_matches() {
     let config = ServerConfig {
         default_tick_hz: 100,
+        decision_hz: 4,
         max_matches: 2,
         event_buffer_capacity: 100,
     };
@@ -416,6 +425,61 @@ async fn test_max_matches() {
         .create_match(CounterConfig { target: 1000 }, 3)
         .await;
     assert!(result.is_err());
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_observe_next_returns_immediately_for_cached_data() {
+    let config = ServerConfig {
+        default_tick_hz: 100,
+        decision_hz: 10, // Decision every 10 ticks (100ms)
+        max_matches: 10,
+        event_buffer_capacity: 100,
+    };
+
+    let server: GameServer<CounterGame> = GameServer::new(config);
+    let match_id = server
+        .create_match(CounterConfig { target: 1000 }, 42)
+        .await
+        .unwrap();
+    let (session, _) = server.join_match(match_id).await.unwrap();
+
+    // Wait for first decision tick to occur
+    sleep(Duration::from_millis(150)).await;
+
+    // Get the current tick after decision tick has occurred
+    let current_tick = server.current_tick(match_id).await.unwrap();
+
+    // First call with after_tick=0 should return immediately (bootstrap case)
+    let start = Instant::now();
+    let (_obs1, _timed_out1) = server
+        .observe_next(match_id, session, 0, 5000)
+        .await
+        .unwrap();
+    let elapsed1 = start.elapsed();
+
+    assert!(
+        elapsed1 < Duration::from_millis(50),
+        "First call should return immediately (got {:?})",
+        elapsed1
+    );
+
+    // Second call with same tick should ALSO return immediately (NEW BEHAVIOR - key change)
+    // This is the critical test: with after_tick = current_tick and last_decision >= current_tick,
+    // it should return the cached observation immediately instead of waiting 100ms for next tick
+    let start = Instant::now();
+    let (_obs2, _timed_out2) = server
+        .observe_next(match_id, session, current_tick, 5000)
+        .await
+        .unwrap();
+    let elapsed2 = start.elapsed();
+
+    assert!(
+        elapsed2 < Duration::from_millis(50),
+        "Calling with same cached tick should return immediately (got {:?})",
+        elapsed2
+    );
 
     server.shutdown().await;
 }

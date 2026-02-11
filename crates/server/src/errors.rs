@@ -85,3 +85,31 @@ impl fmt::Display for SubmitError {
 }
 
 impl std::error::Error for SubmitError {}
+
+/// Error when calling observe_next.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObserveNextError {
+    /// Match not found.
+    NotFound,
+    /// Invalid session token.
+    InvalidSession,
+    /// Another observe_next call is already pending for this session.
+    AlreadyWaiting,
+    /// No observation cached yet (game hasn't started).
+    ObservationNotReady,
+}
+
+impl fmt::Display for ObserveNextError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ObserveNextError::NotFound => write!(f, "match not found"),
+            ObserveNextError::InvalidSession => write!(f, "invalid session token"),
+            ObserveNextError::AlreadyWaiting => {
+                write!(f, "already waiting for observation")
+            }
+            ObserveNextError::ObservationNotReady => write!(f, "observation not ready"),
+        }
+    }
+}
+
+impl std::error::Error for ObserveNextError {}
