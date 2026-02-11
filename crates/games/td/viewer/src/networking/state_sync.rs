@@ -1,8 +1,8 @@
 //! State synchronization systems.
 //!
-//! Game state is received via SSE (Server-Sent Events) from the viewer server's
-//! /api/stream/{match_id} endpoint. This replaces the previous HTTP polling approach,
-//! enabling efficient fan-out to hundreds of concurrent viewers with a single upstream poll.
+//! Game state and match list are received via SSE (Server-Sent Events) from the
+//! viewer server's streaming endpoints. This enables efficient fan-out to many
+//! concurrent viewers with a single upstream poll per stream.
 
 use bevy::prelude::*;
 use crate::game::{
@@ -11,11 +11,8 @@ use crate::game::{
     MatchInfo,
 };
 use crate::networking::{
-    client::{
-        create_list_matches_request,
-        parse_tool_result, stream_url,
-    },
-    ResponseChannels, RequestState, SseChannel, SseConnectionState,
+    client::{stream_url, match_list_stream_url},
+    SseChannel, SseConnectionState,
 };
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
@@ -86,7 +83,7 @@ struct ListMatchesResponse {
     matches: Vec<MatchInfo>,
 }
 
-/// Manage the SSE EventSource connection lifecycle.
+/// Manage the SSE EventSource connection for game observation.
 /// Opens a connection when entering Spectating state, closes when leaving.
 pub fn manage_sse_connection(
     connection: Res<ConnectionState>,
@@ -129,7 +126,35 @@ pub fn manage_sse_connection(
     }
 }
 
-/// Open an EventSource connection to the SSE stream.
+/// Manage the SSE EventSource connection for the match list.
+/// Opens when in MatchSelection state, closes when leaving.
+pub fn manage_match_list_sse(
+    connection: Res<ConnectionState>,
+    ui_state: Res<UiState>,
+    sse_channel: Res<SseChannel>,
+    mut sse_state: ResMut<SseConnectionState>,
+) {
+    match *ui_state {
+        UiState::MatchSelection => {
+            if !sse_state.match_list_connected {
+                let url = match_list_stream_url(&connection.server_url);
+                let tx = sse_channel.match_list_tx.clone();
+                open_match_list_event_source(&url, tx);
+                sse_state.match_list_connected = true;
+                tracing::info!("SSE: connected to match list at {}", url);
+            }
+        }
+        UiState::Spectating => {
+            if sse_state.match_list_connected {
+                close_match_list_event_source();
+                sse_state.match_list_connected = false;
+                tracing::info!("SSE: disconnected match list (entered spectating)");
+            }
+        }
+    }
+}
+
+/// Open an EventSource connection to the SSE stream for game observation.
 fn open_event_source(url: &str, tx: crossbeam_channel::Sender<String>) {
     let url = url.to_string();
 
@@ -171,7 +196,7 @@ fn open_event_source(url: &str, tx: crossbeam_channel::Sender<String>) {
     js_sys::eval(&js_code).unwrap();
 }
 
-/// Close the active EventSource connection.
+/// Close the active EventSource connection for game observation.
 fn close_event_source() {
     let _ = js_sys::eval(
         r#"
@@ -183,43 +208,59 @@ fn close_event_source() {
     );
 }
 
-/// Poll the match list periodically when in match selection (still HTTP-based).
-pub fn poll_match_list(
-    time: Res<Time>,
-    connection: Res<ConnectionState>,
-    ui_state: Res<UiState>,
-    mut match_list: ResMut<MatchList>,
-    channels: Res<ResponseChannels>,
-    mut request_state: ResMut<RequestState>,
-) {
-    if *ui_state != UiState::MatchSelection {
-        return;
-    }
+/// Open an EventSource connection to the SSE stream for the match list.
+fn open_match_list_event_source(url: &str, tx: crossbeam_channel::Sender<String>) {
+    let url = url.to_string();
 
-    if request_state.match_list_pending {
-        return;
-    }
+    let closure = Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
+        if let Some(data) = event.data().as_string() {
+            let _ = tx.send(data);
+        }
+    }) as Box<dyn FnMut(web_sys::MessageEvent)>);
 
-    let current_time = time.elapsed_secs_f64();
-    if current_time - match_list.last_fetch_time < 2.0 {
-        return;
-    }
+    let js_code = format!(
+        r#"
+        if (window.__td_match_list_sse) {{
+            window.__td_match_list_sse.close();
+        }}
+        window.__td_match_list_sse = new EventSource('{}');
+        window.__td_match_list_sse.onmessage = function(e) {{
+            window.__td_match_list_sse_callback(e);
+        }};
+        window.__td_match_list_sse.onerror = function(e) {{
+            console.warn('Match list SSE connection error, will auto-reconnect');
+        }};
+        "#,
+        url
+    );
 
-    match_list.last_fetch_time = current_time;
-    request_state.match_list_pending = true;
-    let request = create_list_matches_request(&connection.server_url);
-    let tx = channels.match_list_tx.clone();
+    let window = web_sys::window().unwrap();
+    js_sys::Reflect::set(
+        &window,
+        &JsValue::from_str("__td_match_list_sse_callback"),
+        closure.as_ref(),
+    ).unwrap();
 
-    ehttp::fetch(request, move |result| {
-        let _ = tx.send(result.map_err(|e| e.to_string()));
-    });
+    closure.forget();
+
+    js_sys::eval(&js_code).unwrap();
 }
 
-/// Process SSE messages and HTTP responses.
+/// Close the active EventSource connection for the match list.
+fn close_match_list_event_source() {
+    let _ = js_sys::eval(
+        r#"
+        if (window.__td_match_list_sse) {
+            window.__td_match_list_sse.close();
+            window.__td_match_list_sse = null;
+        }
+        "#,
+    );
+}
+
+/// Process SSE messages for both game observation and match list.
 pub fn process_responses(
-    channels: Res<ResponseChannels>,
     sse_channel: Res<SseChannel>,
-    mut request_state: ResMut<RequestState>,
     mut game_state: ResMut<GameStateCache>,
     mut connection: ResMut<ConnectionState>,
     mut match_list: ResMut<MatchList>,
@@ -290,23 +331,18 @@ pub fn process_responses(
         }
     }
 
-    // Process match list response
-    if let Ok(result) = channels.match_list_rx.try_recv() {
-        request_state.match_list_pending = false;
-
-        match result {
-            Ok(response) => {
-                match parse_tool_result::<ListMatchesResponse>(&response) {
-                    Ok(list_result) => {
-                        match_list.matches = list_result.matches;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to parse match list response: {}", e);
-                    }
-                }
+    // Process SSE match list messages (drain all, keep latest)
+    let mut latest_match_data = None;
+    while let Ok(data) = sse_channel.match_list_rx.try_recv() {
+        latest_match_data = Some(data);
+    }
+    if let Some(data) = latest_match_data {
+        match serde_json::from_str::<ListMatchesResponse>(&data) {
+            Ok(list_result) => {
+                match_list.matches = list_result.matches;
             }
             Err(e) => {
-                tracing::warn!("Match list request failed: {}", e);
+                tracing::warn!("Failed to parse match list SSE data: {} - data: {}", e, data);
             }
         }
     }

@@ -36,10 +36,9 @@ pub struct GameStateCache {
     pub initialized: bool,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum WaveStatus {
-    #[default]
     Pause {
         #[serde(default)]
         until_tick: u64,
@@ -51,6 +50,15 @@ pub enum WaveStatus {
         wave_size: u16,
         next_spawn_tick: u64,
     },
+}
+
+impl Default for WaveStatus {
+    fn default() -> Self {
+        Self::Pause {
+            until_tick: 0,
+            next_wave_size: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -149,7 +157,6 @@ impl RenderConfig {
 #[derive(Resource, Default)]
 pub struct MatchList {
     pub matches: Vec<MatchInfo>,
-    pub last_fetch_time: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

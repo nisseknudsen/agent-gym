@@ -74,7 +74,7 @@ impl Default for TdConfig {
 
             gold_start: 50,
             gold_per_wave_base: 25,
-            gold_per_wave_growth: 5,
+            gold_per_wave_growth: 1, // 5,
             gold_per_mob_kill: 1,
 
             build_time: Micros::from_secs(5),
@@ -83,7 +83,7 @@ impl Default for TdConfig {
                 cost: 15,
                 hp: 100,
                 range: 3,
-                damage: 5,
+                damage: 3, // 5,
                 fire_period: Micros::from_secs(1),
             },
         }

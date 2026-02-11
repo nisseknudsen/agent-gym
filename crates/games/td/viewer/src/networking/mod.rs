@@ -14,44 +14,36 @@ pub struct NetworkingPlugin;
 
 impl Plugin for NetworkingPlugin {
     fn build(&self, app: &mut App) {
-        // Channels for async HTTP responses (match list only now)
-        let (match_list_tx, match_list_rx) = unbounded::<Result<ehttp::Response, String>>();
-
         // Channel for SSE observe messages from EventSource
         let (sse_observe_tx, sse_observe_rx) = unbounded::<String>();
 
+        // Channel for SSE match list messages from EventSource
+        let (match_list_tx, match_list_rx) = unbounded::<String>();
+
         app.init_resource::<crate::game::ConnectionState>()
             .init_resource::<crate::game::MatchList>()
-            .insert_resource(ResponseChannels {
-                match_list_tx,
-                match_list_rx,
-            })
             .insert_resource(SseChannel {
                 observe_tx: sse_observe_tx,
                 observe_rx: sse_observe_rx,
+                match_list_tx,
+                match_list_rx,
             })
             .init_resource::<SseConnectionState>()
-            .init_resource::<RequestState>()
             .add_systems(Update, (
                 manage_sse_connection,
-                poll_match_list,
+                manage_match_list_sse,
                 process_responses,
             ).chain());
     }
 }
 
-/// Channels for receiving async HTTP responses (match list).
-#[derive(Resource)]
-pub struct ResponseChannels {
-    pub match_list_tx: Sender<Result<ehttp::Response, String>>,
-    pub match_list_rx: Receiver<Result<ehttp::Response, String>>,
-}
-
-/// Channel for SSE observe data from EventSource.
+/// Channels for SSE data from EventSource connections.
 #[derive(Resource)]
 pub struct SseChannel {
     pub observe_tx: Sender<String>,
     pub observe_rx: Receiver<String>,
+    pub match_list_tx: Sender<String>,
+    pub match_list_rx: Receiver<String>,
 }
 
 /// Tracks the EventSource connection state.
@@ -59,12 +51,8 @@ pub struct SseChannel {
 pub struct SseConnectionState {
     /// The match_id we're currently streaming, if any.
     pub connected_match_id: Option<u64>,
-    /// Whether we have an active EventSource.
+    /// Whether we have an active EventSource for game observation.
     pub is_connected: bool,
-}
-
-/// Track in-flight request state to prevent overlapping requests.
-#[derive(Resource, Default)]
-pub struct RequestState {
-    pub match_list_pending: bool,
+    /// Whether we have an active EventSource for match list.
+    pub match_list_connected: bool,
 }

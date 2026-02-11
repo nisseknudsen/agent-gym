@@ -50,11 +50,19 @@ struct MatchStream {
     _task: tokio::task::JoinHandle<()>,
 }
 
+/// Tracks the match-list broadcast channel for SSE fan-out.
+struct MatchListStream {
+    tx: tokio::sync::broadcast::Sender<String>,
+    _task: tokio::task::JoinHandle<()>,
+}
+
 struct AppState {
     mcp_server_url: String,
     http_client: Client<hyper_util::client::legacy::connect::HttpConnector, Body>,
     /// Active match streams: match_id -> broadcast sender + poll task.
     streams: RwLock<HashMap<u64, MatchStream>>,
+    /// Active match-list stream: created on first subscriber, cleared when all disconnect.
+    match_list_stream: RwLock<Option<MatchListStream>>,
 }
 
 #[tokio::main]
@@ -71,6 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mcp_server_url: args.mcp_server.clone(),
         http_client,
         streams: RwLock::new(HashMap::new()),
+        match_list_stream: RwLock::new(None),
     });
 
     if !args.static_dir.exists() {
@@ -83,6 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/api/mcp", any(proxy_mcp))
         .route("/api/mcp/{*path}", any(proxy_mcp))
+        .route("/api/stream/matches", get(stream_matches))
         .route("/api/stream/{match_id}", get(stream_match))
         .fallback_service(ServeDir::new(&args.static_dir).append_index_html_on_directories(true))
         .layer(CorsLayer::permissive())
@@ -99,6 +109,105 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// SSE endpoint: streams the match list to all connected viewers.
+///
+/// On first subscriber, starts a background task that polls `list_matches` every 2s
+/// and broadcasts the raw JSON content to all SSE subscribers. Stops when all
+/// subscribers disconnect.
+async fn stream_matches(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let rx = {
+        let mut lock = state.match_list_stream.write().await;
+
+        if let Some(entry) = lock.as_ref() {
+            tracing::info!(
+                "Match list SSE: new subscriber (receivers: {})",
+                entry.tx.receiver_count() + 1
+            );
+            entry.tx.subscribe()
+        } else {
+            let (tx, rx) = tokio::sync::broadcast::channel::<String>(16);
+
+            let poll_tx = tx.clone();
+            let poll_state = state.clone();
+            let task = tokio::spawn(async move {
+                poll_match_list_loop(poll_state, poll_tx).await;
+            });
+
+            *lock = Some(MatchListStream {
+                tx: tx.clone(),
+                _task: task,
+            });
+
+            tracing::info!("Match list SSE: first subscriber, started polling");
+            rx
+        }
+    };
+
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).map(|result| match result {
+        Ok(json) => Ok::<_, Infallible>(Event::default().data(json)),
+        Err(_) => Ok(Event::default().data("{\"error\": \"stream lagged\"}")),
+    });
+
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+/// Background task: polls `list_matches` MCP tool every 2s and broadcasts the raw JSON.
+/// Stops when all subscribers disconnect (receiver_count drops to 0).
+async fn poll_match_list_loop(
+    state: Arc<AppState>,
+    tx: tokio::sync::broadcast::Sender<String>,
+) {
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(2));
+
+    loop {
+        interval.tick().await;
+
+        if tx.receiver_count() == 0 {
+            tracing::info!("Match list SSE: no subscribers, stopping poll loop");
+            break;
+        }
+
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "list_matches",
+                "arguments": {}
+            }
+        });
+
+        match call_mcp(&state, &body).await {
+            Ok(json) => {
+                let text = json
+                    .get("result")
+                    .and_then(|r| r.get("content"))
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|item| item.get("text"))
+                    .and_then(|t| t.as_str());
+
+                if let Some(matches_json) = text {
+                    let _ = tx.send(matches_json.to_string());
+                } else {
+                    tracing::warn!("Match list SSE: unexpected response format");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Match list SSE: poll failed: {}", e);
+            }
+        }
+    }
+
+    // Clear the stream entry
+    *state.match_list_stream.write().await = None;
+    tracing::info!("Match list SSE: cleaned up stream entry");
 }
 
 /// SSE endpoint: streams game state for a match to all connected viewers.
