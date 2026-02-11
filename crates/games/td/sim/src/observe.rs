@@ -1,14 +1,18 @@
 use crate::config::TowerKind;
-use crate::world::{TdState, WavePhase};
+use crate::world::{TdState, TowerId, WavePhase};
 use sim_core::{PlayerId, Tick};
 
 #[derive(Clone, Debug)]
 pub struct ObsTower {
+    pub id: TowerId,
     pub x: u16,
     pub y: u16,
     pub hp: i32,
     pub kind: TowerKind,
     pub player_id: PlayerId,
+    pub upgrade_level: u8,
+    pub damage: i32,
+    pub upgrade_cost: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -72,13 +76,13 @@ pub struct TdObservation {
 impl TdObservation {
     pub fn from_state(state: &TdState, tick: Tick) -> Self {
         let config = &state.config;
-        let basic = config.spec(TowerKind::Basic);
+        let player_count = config.player_count;
 
         let wave_status = match &state.phase {
             WavePhase::Pause { until_tick } => {
                 let next_wave = state.current_wave + 1;
                 let next_wave_size = if next_wave <= config.waves_total {
-                    config.wave_base_size + config.wave_size_growth * (next_wave as u16 - 1)
+                    config.wave_size(next_wave, player_count)
                 } else {
                     0
                 };
@@ -98,6 +102,11 @@ impl TdObservation {
             },
         };
 
+        // Dynamic costs based on current wave
+        let current_tower_cost = config.build_cost(state.current_wave, TowerKind::Basic);
+        let current_tower_damage = config.spec(TowerKind::Basic).damage;
+        let current_gold_per_kill = config.gold_per_kill(state.current_wave);
+
         TdObservation {
             tick,
             tick_hz: config.tick_hz,
@@ -108,11 +117,11 @@ impl TdObservation {
             goal: config.goal,
 
             max_leaks: config.max_leaks,
-            tower_cost: basic.cost,
-            tower_range: basic.range,
-            tower_damage: basic.damage,
+            tower_cost: current_tower_cost,
+            tower_range: config.spec(TowerKind::Basic).range,
+            tower_damage: current_tower_damage,
             build_time_ticks: config.duration_to_ticks(config.build_time),
-            gold_per_mob_kill: config.gold_per_mob_kill,
+            gold_per_mob_kill: current_gold_per_kill,
 
             gold: state.gold,
             leaks: state.leaks,
@@ -124,13 +133,17 @@ impl TdObservation {
             towers: state
                 .world
                 .towers
-                .values()
-                .map(|t| ObsTower {
+                .iter()
+                .map(|(id, t)| ObsTower {
+                    id,
                     x: t.x,
                     y: t.y,
                     hp: t.hp,
                     kind: t.kind,
                     player_id: t.player_id,
+                    upgrade_level: t.upgrade_level,
+                    damage: config.tower_damage(t.kind, t.upgrade_level),
+                    upgrade_cost: config.upgrade_cost(t.upgrade_level),
                 })
                 .collect(),
             mobs: state

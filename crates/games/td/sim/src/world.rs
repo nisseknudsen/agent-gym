@@ -72,6 +72,7 @@ pub struct Tower {
     pub max_hp: i32,
     pub next_fire_tick: Tick,
     pub player_id: PlayerId,
+    pub upgrade_level: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -139,7 +140,7 @@ pub struct TdState {
 impl TdState {
     pub fn new(config: TdConfig) -> Self {
         let size = (config.width as usize) * (config.height as usize);
-        let gold_start = config.gold_start;
+        let gold_start = config.gold_start(config.player_count);
         let initial_pause_ticks = config.duration_to_ticks(config.inter_wave_pause);
         let world = World::new(config.width, config.height);
         Self {

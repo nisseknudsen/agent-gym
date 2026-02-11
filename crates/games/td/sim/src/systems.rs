@@ -22,7 +22,7 @@ pub fn try_queue_build(
         return false;
     }
 
-    let cost = state.config.spec(kind).cost;
+    let cost = state.config.build_cost(state.current_wave, kind);
     if state.gold < cost {
         events.push(TdEvent::InsufficientGold {
             cost,
@@ -49,6 +49,38 @@ pub fn try_queue_build(
     true
 }
 
+pub fn try_upgrade_tower(
+    state: &mut TdState,
+    tower_id: TowerId,
+    events: &mut Vec<TdEvent>,
+) -> bool {
+    let cost = {
+        let tower = match state.world.towers.get(tower_id) {
+            Some(t) => t,
+            None => return false,
+        };
+        state.config.upgrade_cost(tower.upgrade_level)
+    };
+
+    if state.gold < cost {
+        events.push(TdEvent::InsufficientGold {
+            cost,
+            have: state.gold,
+        });
+        return false;
+    }
+
+    state.gold -= cost;
+    let tower = state.world.towers.get_mut(tower_id).unwrap();
+    tower.upgrade_level += 1;
+
+    events.push(TdEvent::TowerUpgraded {
+        id: tower_id,
+        new_level: tower.upgrade_level,
+    });
+    true
+}
+
 pub fn process_builds(state: &mut TdState, tick: Tick, events: &mut Vec<TdEvent>) -> bool {
     let mut towers_placed = false;
 
@@ -64,6 +96,7 @@ pub fn process_builds(state: &mut TdState, tick: Tick, events: &mut Vec<TdEvent>
                 max_hp: spec.hp,
                 next_fire_tick: tick,
                 player_id: build.player_id,
+                upgrade_level: 0,
             };
             let id = state.world.towers.insert(tower);
             state.world.grid.set(build.x, build.y, CellState::Tower(id));
@@ -83,6 +116,8 @@ pub fn process_builds(state: &mut TdState, tick: Tick, events: &mut Vec<TdEvent>
 }
 
 pub fn update_wave(state: &mut TdState, tick: Tick, events: &mut Vec<TdEvent>) {
+    let player_count = state.config.player_count;
+
     match &mut state.phase {
         WavePhase::Pause { until_tick } => {
             if tick >= *until_tick {
@@ -93,8 +128,7 @@ pub fn update_wave(state: &mut TdState, tick: Tick, events: &mut Vec<TdEvent>) {
                     return;
                 }
 
-                let wave_size = state.config.wave_base_size
-                    + state.config.wave_size_growth * (state.current_wave as u16 - 1);
+                let wave_size = state.config.wave_size(state.current_wave, player_count);
 
                 state.phase = WavePhase::InWave {
                     spawned: 0,
@@ -114,10 +148,11 @@ pub fn update_wave(state: &mut TdState, tick: Tick, events: &mut Vec<TdEvent>) {
         } => {
             if tick >= *next_spawn_tick && *spawned < *wave_size {
                 let spawn = state.config.spawn;
+                let mob_hp = state.config.mob_hp(state.current_wave, player_count);
                 state.world.mobs.insert(Mob {
                     x: spawn.0,
                     y: spawn.1,
-                    hp: 10,
+                    hp: mob_hp,
                     dmg: 1,
                     speed: Speed::from_cells_per_sec(2),
                     next_move_tick: tick,
@@ -130,8 +165,7 @@ pub fn update_wave(state: &mut TdState, tick: Tick, events: &mut Vec<TdEvent>) {
             if *spawned >= *wave_size && state.world.mobs.is_empty() {
                 let wave = state.current_wave;
 
-                let gold_award = state.config.gold_per_wave_base
-                    + state.config.gold_per_wave_growth * (wave as u32 - 1);
+                let gold_award = state.config.gold_per_wave(wave, player_count);
                 state.gold += gold_award;
 
                 events.push(TdEvent::WaveEnded { wave });
@@ -218,7 +252,8 @@ pub fn tower_attacks(state: &mut TdState, tick: Tick, _events: &mut Vec<TdEvent>
                 return None;
             }
             let spec = state.config.spec(tower.kind);
-            Some((id, tower.x, tower.y, spec.range, spec.damage))
+            let damage = state.config.tower_damage(tower.kind, tower.upgrade_level);
+            Some((id, tower.x, tower.y, spec.range, damage))
         })
         .collect();
 
@@ -263,7 +298,7 @@ fn find_tower_target(
 }
 
 pub fn remove_dead(state: &mut TdState, events: &mut Vec<TdEvent>) {
-    let gold_per_kill = state.config.gold_per_mob_kill;
+    let gold_per_kill = state.config.gold_per_kill(state.current_wave);
     let dead: Vec<MobId> = state
         .world
         .mobs

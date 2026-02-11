@@ -10,8 +10,6 @@ pub struct CreateMatchParams {
     pub required_players: u8,
     /// Number of waves.
     pub waves: u8,
-    /// Starting gold.
-    pub starting_gold: u32,
 }
 
 /// Result of creating a match.
@@ -58,34 +56,40 @@ pub struct TerminateMatchParams {
     pub match_id: u64,
 }
 
-/// Parameters for submitting an action.
+/// Parameters for placing a tower.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SubmitActionParams {
+pub struct PlaceTowerParams {
     pub match_id: u64,
     pub session_token: u64,
-    /// The tick at which this action should be executed.
-    /// If the tick has passed, the action executes on the next tick.
+    /// The tick at which this action should be executed. Use 0 to execute immediately.
     pub intended_tick: u64,
-    /// The action to perform.
-    pub action: ActionParams,
+    /// X grid coordinate.
+    pub x: u16,
+    /// Y grid coordinate.
+    pub y: u16,
+    /// Tower type (e.g. "Basic").
+    #[serde(default = "default_tower_type")]
+    pub tower_type: String,
 }
 
-/// Available actions in the TD game.
+fn default_tower_type() -> String {
+    "Basic".to_string()
+}
+
+/// Parameters for upgrading a tower.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type")]
-pub enum ActionParams {
-    /// Place a tower at the given coordinates.
-    PlaceTower {
-        x: u16,
-        y: u16,
-        /// Tower type (e.g. "Basic").
-        tower_type: String,
-    },
+pub struct UpgradeTowerParams {
+    pub match_id: u64,
+    pub session_token: u64,
+    /// The tick at which this action should be executed. Use 0 to execute immediately.
+    pub intended_tick: u64,
+    /// ID of the tower to upgrade (from observe response).
+    pub tower_id: String,
 }
 
 /// Result of submitting an action.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SubmitActionResult {
+pub struct ActionResult {
     pub action_id: u64,
     /// The tick at which the action was actually scheduled to execute.
     pub scheduled_tick: u64,
@@ -160,11 +164,15 @@ pub enum WaveStatus {
 /// Information about a tower.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TowerInfo {
+    pub id: String,
     pub x: u16,
     pub y: u16,
     pub hp: i32,
     pub tower_type: String,
     pub player_id: u8,
+    pub upgrade_level: u8,
+    pub damage: i32,
+    pub upgrade_cost: u32,
 }
 
 /// Information about a mob.

@@ -25,6 +25,8 @@ use sim_td::mcp::types::*;
 use sim_td::mcp::TdMcpServer;
 use sim_td::observe::ObsWaveStatus;
 use sim_td::TdGame;
+use sim_td::TowerId;
+use slotmap::Key;
 use std::{collections::HashMap, convert::Infallible, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, sync::RwLock};
 use tokio_stream::StreamExt;
@@ -373,11 +375,15 @@ fn transform_observation(obs: sim_td::TdObservation) -> ObserveResult {
             .towers
             .into_iter()
             .map(|t| TowerInfo {
+                id: tower_id_to_string(t.id),
                 x: t.x,
                 y: t.y,
                 hp: t.hp,
                 tower_type: kind_to_string(t.kind),
                 player_id: t.player_id,
+                upgrade_level: t.upgrade_level,
+                damage: t.damage,
+                upgrade_cost: t.upgrade_cost,
             })
             .collect(),
         mobs: obs
@@ -430,4 +436,8 @@ fn kind_to_string(kind: TowerKind) -> String {
     match kind {
         TowerKind::Basic => "Basic".to_string(),
     }
+}
+
+fn tower_id_to_string(id: TowerId) -> String {
+    id.data().as_ffi().to_string()
 }

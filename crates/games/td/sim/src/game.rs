@@ -39,7 +39,7 @@ impl Game for TdGame {
     ) {
         self.state.tick = tick;
 
-        // 1. Process build actions → queue builds, deduct gold
+        // 1. Process actions → queue builds, upgrades, deduct gold
         for action in actions {
             match &action.payload {
                 TdAction::PlaceTower { x, y, kind } => {
@@ -52,6 +52,9 @@ impl Game for TdGame {
                         action.player_id,
                         out_events,
                     );
+                }
+                TdAction::UpgradeTower { tower_id } => {
+                    systems::try_upgrade_tower(&mut self.state, *tower_id, out_events);
                 }
             }
         }

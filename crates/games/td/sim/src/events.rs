@@ -37,4 +37,8 @@ pub enum TdEvent {
         cost: u32,
         have: u32,
     },
+    TowerUpgraded {
+        id: TowerId,
+        new_level: u8,
+    },
 }
