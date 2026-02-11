@@ -1,4 +1,5 @@
-//! MCP HTTP client using ehttp.
+//! MCP HTTP client using ehttp (for one-off requests).
+//! SSE streaming is handled via web-sys EventSource in state_sync.
 
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -89,33 +90,9 @@ fn build_tool_request(server_url: &str, tool_name: &str, arguments: serde_json::
     req
 }
 
-/// Create an observe request.
-pub fn create_observe_request(server_url: &str, match_id: u64, session_token: u64) -> ehttp::Request {
-    build_tool_request(server_url, "observe", serde_json::json!({
-        "match_id": match_id,
-        "session_token": session_token,
-    }))
-}
-
-/// Create a poll_events request.
-pub fn create_poll_events_request(server_url: &str, match_id: u64, session_token: u64, cursor: u64) -> ehttp::Request {
-    build_tool_request(server_url, "poll_events", serde_json::json!({
-        "match_id": match_id,
-        "session_token": session_token,
-        "cursor": cursor,
-    }))
-}
-
 /// Create a list_matches request.
 pub fn create_list_matches_request(server_url: &str) -> ehttp::Request {
     build_tool_request(server_url, "list_matches", serde_json::json!({}))
-}
-
-/// Create a spectate_match request.
-pub fn create_spectate_match_request(server_url: &str, match_id: u64) -> ehttp::Request {
-    build_tool_request(server_url, "spectate_match", serde_json::json!({
-        "match_id": match_id,
-    }))
 }
 
 /// Create a leave_match request.
@@ -155,4 +132,13 @@ pub fn parse_tool_result<T: for<'de> Deserialize<'de>>(response: &ehttp::Respons
 
     serde_json::from_str(text)
         .map_err(|e| format!("Failed to parse tool result: {} - text: {}", e, text))
+}
+
+/// Build the SSE stream URL for a match.
+pub fn stream_url(server_url: &str, match_id: u64) -> String {
+    if server_url.is_empty() {
+        format!("/api/stream/{}", match_id)
+    } else {
+        format!("{}/api/stream/{}", server_url, match_id)
+    }
 }

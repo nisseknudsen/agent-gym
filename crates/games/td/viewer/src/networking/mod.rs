@@ -14,54 +14,57 @@ pub struct NetworkingPlugin;
 
 impl Plugin for NetworkingPlugin {
     fn build(&self, app: &mut App) {
-        // Create channels for async responses
-        let (observe_tx, observe_rx) = unbounded::<Result<ehttp::Response, String>>();
-        let (events_tx, events_rx) = unbounded::<Result<ehttp::Response, String>>();
+        // Channels for async HTTP responses (match list only now)
         let (match_list_tx, match_list_rx) = unbounded::<Result<ehttp::Response, String>>();
-        let (join_match_tx, join_match_rx) = unbounded::<(u64, Result<ehttp::Response, String>)>();
+
+        // Channel for SSE observe messages from EventSource
+        let (sse_observe_tx, sse_observe_rx) = unbounded::<String>();
 
         app.init_resource::<crate::game::ConnectionState>()
-            .init_resource::<crate::game::PollingTimers>()
             .init_resource::<crate::game::MatchList>()
-            .init_resource::<crate::game::GameEvents>()
             .insert_resource(ResponseChannels {
-                observe_tx,
-                observe_rx,
-                events_tx,
-                events_rx,
                 match_list_tx,
                 match_list_rx,
-                join_match_tx,
-                join_match_rx,
             })
+            .insert_resource(SseChannel {
+                observe_tx: sse_observe_tx,
+                observe_rx: sse_observe_rx,
+            })
+            .init_resource::<SseConnectionState>()
             .init_resource::<RequestState>()
             .add_systems(Update, (
-                poll_observe,
-                poll_events,
+                manage_sse_connection,
                 poll_match_list,
                 process_responses,
             ).chain());
     }
 }
 
-/// Channels for receiving async HTTP responses.
+/// Channels for receiving async HTTP responses (match list).
 #[derive(Resource)]
 pub struct ResponseChannels {
-    pub observe_tx: Sender<Result<ehttp::Response, String>>,
-    pub observe_rx: Receiver<Result<ehttp::Response, String>>,
-    pub events_tx: Sender<Result<ehttp::Response, String>>,
-    pub events_rx: Receiver<Result<ehttp::Response, String>>,
     pub match_list_tx: Sender<Result<ehttp::Response, String>>,
     pub match_list_rx: Receiver<Result<ehttp::Response, String>>,
-    pub join_match_tx: Sender<(u64, Result<ehttp::Response, String>)>,
-    pub join_match_rx: Receiver<(u64, Result<ehttp::Response, String>)>,
+}
+
+/// Channel for SSE observe data from EventSource.
+#[derive(Resource)]
+pub struct SseChannel {
+    pub observe_tx: Sender<String>,
+    pub observe_rx: Receiver<String>,
+}
+
+/// Tracks the EventSource connection state.
+#[derive(Resource, Default)]
+pub struct SseConnectionState {
+    /// The match_id we're currently streaming, if any.
+    pub connected_match_id: Option<u64>,
+    /// Whether we have an active EventSource.
+    pub is_connected: bool,
 }
 
 /// Track in-flight request state to prevent overlapping requests.
 #[derive(Resource, Default)]
 pub struct RequestState {
-    pub observe_pending: bool,
-    pub events_pending: bool,
     pub match_list_pending: bool,
-    pub join_match_pending: bool,
 }

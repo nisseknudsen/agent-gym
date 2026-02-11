@@ -141,7 +141,9 @@ pub fn update_hud(
     // Update status
     for mut text in status_query.iter_mut() {
         let status = match &game_state.wave_status {
-            WaveStatus::Unknown => "Connecting...".to_string(),
+            WaveStatus::Pause { until_tick, next_wave_size } if *until_tick == 0 && *next_wave_size == 0 => {
+                "Connecting...".to_string()
+            }
             WaveStatus::Pause { until_tick, next_wave_size } => {
                 let ticks_remaining = until_tick.saturating_sub(game_state.tick);
                 let seconds = ticks_remaining as f32 / game_state.tick_hz as f32;

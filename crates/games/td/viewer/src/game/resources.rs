@@ -6,17 +6,14 @@ use serde::{Deserialize, Serialize};
 /// Mirrors the server's observation state.
 #[derive(Resource, Default, Clone, Debug)]
 pub struct GameStateCache {
-    // Time
     pub tick: u64,
     pub tick_hz: u32,
 
-    // Map info
     pub map_width: u16,
     pub map_height: u16,
     pub spawn: (u16, u16),
     pub goal: (u16, u16),
 
-    // Game rules
     pub max_leaks: u16,
     pub tower_cost: u32,
     pub tower_range: u16,
@@ -24,16 +21,13 @@ pub struct GameStateCache {
     pub build_time_ticks: u64,
     pub gold_per_mob_kill: u32,
 
-    // Current resources
     pub gold: u32,
     pub leaks: u16,
 
-    // Wave info
     pub current_wave: u8,
     pub waves_total: u8,
     pub wave_status: WaveStatus,
 
-    // Entities
     pub towers: Vec<TowerInfo>,
     pub mobs: Vec<MobInfo>,
     pub build_queue: Vec<PendingBuildInfo>,
@@ -46,9 +40,10 @@ pub struct GameStateCache {
 #[serde(tag = "type")]
 pub enum WaveStatus {
     #[default]
-    Unknown,
     Pause {
+        #[serde(default)]
         until_tick: u64,
+        #[serde(default)]
         next_wave_size: u16,
     },
     InWave {
@@ -81,23 +76,15 @@ pub struct PendingBuildInfo {
     pub player_id: u8,
 }
 
-/// Connection state to the MCP server.
+/// Connection state to the server.
 #[derive(Resource)]
 pub struct ConnectionState {
     /// Base URL of the web server (e.g., "http://localhost:8080").
     pub server_url: String,
     /// Current match ID we're observing.
     pub match_id: Option<u64>,
-    /// Session token for the match.
+    /// Session token (managed server-side for SSE streams).
     pub session_token: Option<u64>,
-    /// Cursor for event polling.
-    pub event_cursor: u64,
-    /// Last time we polled for observations.
-    #[allow(dead_code)]
-    pub last_observe_time: f64,
-    /// Last time we polled for events.
-    #[allow(dead_code)]
-    pub last_events_time: f64,
     /// Connection status.
     pub status: ConnectionStatus,
 }
@@ -108,9 +95,6 @@ impl Default for ConnectionState {
             server_url: String::new(),
             match_id: None,
             session_token: None,
-            event_cursor: 0,
-            last_observe_time: 0.0,
-            last_events_time: 0.0,
             status: ConnectionStatus::Disconnected,
         }
     }
@@ -161,22 +145,6 @@ impl RenderConfig {
     }
 }
 
-/// Timers for polling the server.
-#[derive(Resource)]
-pub struct PollingTimers {
-    pub observe_timer: Timer,
-    pub events_timer: Timer,
-}
-
-impl Default for PollingTimers {
-    fn default() -> Self {
-        Self {
-            observe_timer: Timer::from_seconds(0.1, TimerMode::Repeating), // 100ms
-            events_timer: Timer::from_seconds(0.2, TimerMode::Repeating),  // 200ms
-        }
-    }
-}
-
 /// List of available matches from the server.
 #[derive(Resource, Default)]
 pub struct MatchList {
@@ -207,31 +175,4 @@ pub enum UiState {
     #[default]
     MatchSelection,
     Spectating,
-}
-
-/// Events received from the server.
-#[derive(Resource, Default)]
-pub struct GameEvents {
-    pub events: Vec<GameEvent>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GameEvent {
-    pub sequence: u64,
-    pub tick: u64,
-    pub event: EventData,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum EventData {
-    TowerPlaced { x: u16, y: u16 },
-    TowerDestroyed { x: u16, y: u16 },
-    MobLeaked,
-    MobKilled { x: u16, y: u16 },
-    WaveStarted { wave: u8 },
-    WaveEnded { wave: u8 },
-    BuildQueued { x: u16, y: u16 },
-    BuildStarted { x: u16, y: u16 },
-    InsufficientGold { cost: u32, have: u32 },
 }

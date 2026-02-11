@@ -1,7 +1,6 @@
 use super::types::*;
 use crate::actions::TdAction;
 use crate::config::{TdConfig, TowerKind};
-use crate::events::TdEvent;
 use crate::observe::ObsWaveStatus;
 use crate::TdGame;
 use rmcp::{
@@ -10,7 +9,7 @@ use rmcp::{
     model::{CallToolResult, ServerCapabilities, ServerInfo},
     tool, tool_router,
 };
-use sim_server::{EventCursor, GameServer, MatchStatus, ServerConfig, SessionToken};
+use sim_server::{GameServer, MatchStatus, ServerConfig, SessionToken};
 use std::sync::Arc;
 
 /// MCP Server for the Tower Defense game.
@@ -156,9 +155,9 @@ impl TdMcpServer {
                 "Build towers near the mob path to maximize damage. Mobs walk in a straight line from spawn to goal unless blocked.".to_string(),
                 "Place towers to create a maze - mobs will pathfind around them, giving towers more time to attack.".to_string(),
                 "You can completely block the path, but mobs will then attack your towers to break through. This can be a valid strategy if your towers can kill mobs fast enough.".to_string(),
-                "Check gold before building. If you don't have enough, you'll get an InsufficientGold event.".to_string(),
+                "Check gold before building. If you don't have enough, the action will fail.".to_string(),
                 "Watch the wave_status in observe to know when the next wave starts and how many mobs it will have.".to_string(),
-                "Poll events every 2-5 seconds to track what's happening (mob kills, tower destruction, wave starts/ends). Do NOT poll in a tight loop.".to_string(),
+                "Call observe every 2-5 seconds to track the full game state. Do NOT poll in a tight loop.".to_string(),
             ],
         };
 
@@ -231,7 +230,7 @@ impl TdMcpServer {
     }
 
     /// Submit an action to the game.
-    #[tool(description = "Submit an action (e.g., place a tower). If intended_tick is not provided or has passed, executes on the next tick. Returns the actual scheduled tick.")]
+    #[tool(description = "Submit an action (e.g., place a tower). If intended_tick has passed, executes on the next tick. Use 0 to execute immediately. Returns the actual scheduled tick.")]
     async fn submit_action(
         &self,
         Parameters(params): Parameters<SubmitActionParams>,
@@ -244,15 +243,13 @@ impl TdMcpServer {
             },
         };
 
-        let intended_tick = params.intended_tick.unwrap_or(0);
-
         let (action_id, scheduled_tick) = self
             .game_server
             .submit_action(
                 params.match_id,
                 SessionToken(params.session_token),
                 action,
-                intended_tick,
+                params.intended_tick,
             )
             .await
             .map_err(|e| format!("Failed to submit action: {}", e))?;
@@ -359,73 +356,6 @@ impl TdMcpServer {
         .unwrap())
     }
 
-    /// Poll events from the game.
-    #[tool(description = "Poll events from the game starting at the given cursor position. Do NOT poll this in a tight loop — calling every 2-5 seconds is sufficient.")]
-    async fn poll_events(
-        &self,
-        Parameters(params): Parameters<PollEventsParams>,
-    ) -> Result<String, String> {
-        let (events, new_cursor) = self
-            .game_server
-            .poll_events(
-                params.match_id,
-                SessionToken(params.session_token),
-                EventCursor(params.cursor),
-            )
-            .await
-            .map_err(|e| format!("Failed to poll events: {}", e))?;
-
-        let events: Vec<_> = events
-            .into_iter()
-            .map(|e| GameEvent {
-                sequence: e.sequence,
-                tick: e.tick,
-                event: convert_event(e.event),
-            })
-            .collect();
-
-        Ok(serde_json::to_string(&PollEventsResult {
-            events,
-            next_cursor: new_cursor.0,
-        })
-        .unwrap())
-    }
-
-    /// Get the current tick of a match.
-    #[tool(description = "Get the current tick number of a match")]
-    async fn current_tick(
-        &self,
-        Parameters(params): Parameters<CurrentTickParams>,
-    ) -> Result<String, String> {
-        let tick = self
-            .game_server
-            .current_tick(params.match_id)
-            .await
-            .map_err(|e| format!("Failed to get tick: {}", e))?;
-
-        Ok(serde_json::to_string(&CurrentTickResult { tick }).unwrap())
-    }
-}
-
-fn convert_event(event: TdEvent) -> EventData {
-    match event {
-        TdEvent::TowerPlaced { x, y, kind, .. } => EventData::TowerPlaced {
-            x,
-            y,
-            tower_type: kind_to_string(kind),
-        },
-        TdEvent::TowerDestroyed { x, y, .. } => EventData::TowerDestroyed { x, y },
-        TdEvent::MobLeaked { .. } => EventData::MobLeaked,
-        TdEvent::MobKilled { x, y, .. } => EventData::MobKilled { x, y },
-        TdEvent::WaveStarted { wave } => EventData::WaveStarted { wave },
-        TdEvent::WaveEnded { wave } => EventData::WaveEnded { wave },
-        TdEvent::BuildQueued { x, y, kind } => EventData::BuildQueued {
-            x,
-            y,
-            tower_type: kind_to_string(kind),
-        },
-        TdEvent::InsufficientGold { cost, have } => EventData::InsufficientGold { cost, have },
-    }
 }
 
 impl ServerHandler for TdMcpServer {

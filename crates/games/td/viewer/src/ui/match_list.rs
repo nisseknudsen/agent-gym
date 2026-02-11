@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 use crate::game::{ConnectionState, MatchInfo, MatchList, MatchStatusInfo, UiState};
-use crate::networking::{spectate_match, RequestState, ResponseChannels};
+use crate::networking::spectate_match;
 
 /// Marker for the match list root.
 #[derive(Component)]
@@ -201,14 +201,13 @@ pub fn handle_match_selection(
         (&Interaction, &MatchEntryButton, &mut BackgroundColor),
         Changed<Interaction>,
     >,
-    connection: Res<ConnectionState>,
-    channels: Res<ResponseChannels>,
-    mut request_state: ResMut<RequestState>,
+    mut connection: ResMut<ConnectionState>,
+    mut ui_state: ResMut<UiState>,
 ) {
     for (interaction, entry, mut bg_color) in interaction_query.iter_mut() {
         match *interaction {
             Interaction::Pressed => {
-                spectate_match(&channels, &mut request_state, &connection, entry.match_id);
+                spectate_match(&mut connection, &mut ui_state, entry.match_id);
                 *bg_color = BackgroundColor(Color::srgba(0.4, 0.4, 0.5, 1.0));
             }
             Interaction::Hovered => {

@@ -4499,6 +4499,7 @@ dependencies = [
  "console_error_panic_hook",
  "crossbeam-channel",
  "ehttp",
+ "js-sys",
  "serde",
  "serde_json",
  "tracing",
@@ -4517,7 +4518,9 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "serde_json",
  "tokio",
+ "tokio-stream",
  "tower-http",
  "tracing",
  "tracing-subscriber",
@@ -4642,6 +4645,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
