@@ -6,12 +6,10 @@ members = [
     "crates/server",
     "crates/games/td/sim",
     "crates/games/td/viewer",
-    "crates/games/td/web",
 ]
 default-members = [
     "crates/core",
     "crates/host",
     "crates/server",
     "crates/games/td/sim",
-    "crates/games/td/web",
 ]

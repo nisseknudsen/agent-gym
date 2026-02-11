@@ -6,7 +6,7 @@ pub use match_list::*;
 
 use bevy::prelude::*;
 use crate::game::{
-    AttackLine, ConnectionState, DeathParticle, GameEvents, GameStateCache, GridCell, Mob,
+    AttackLine, ConnectionState, DeathParticle, GameStateCache, GridCell, Mob,
     PendingBuild, Tower, UiState,
 };
 use crate::networking::leave_spectate;
@@ -60,10 +60,9 @@ fn handle_leave_spectate(
     mut ui_state: ResMut<UiState>,
     mut connection: ResMut<ConnectionState>,
     mut game_state: ResMut<GameStateCache>,
-    mut events: ResMut<GameEvents>,
 ) {
     if *ui_state == UiState::Spectating && keys.just_pressed(KeyCode::Escape) {
-        leave_spectate(&mut connection, &mut game_state, &mut events, &mut ui_state);
+        leave_spectate(&mut connection, &mut game_state, &mut ui_state);
         // Push browser history so the URL reflects match selection
         push_browser_state("");
     }
@@ -74,7 +73,6 @@ fn handle_browser_back(
     mut ui_state: ResMut<UiState>,
     mut connection: ResMut<ConnectionState>,
     mut game_state: ResMut<GameStateCache>,
-    mut events: ResMut<GameEvents>,
 ) {
     if *ui_state != UiState::Spectating {
         return;
@@ -86,7 +84,7 @@ fn handle_browser_back(
     if hash.is_empty() || hash == "#" {
         // Only leave if we were spectating — the hash being empty means the user hit back
         if connection.match_id.is_some() {
-            leave_spectate(&mut connection, &mut game_state, &mut events, &mut ui_state);
+            leave_spectate(&mut connection, &mut game_state, &mut ui_state);
         }
     }
 }

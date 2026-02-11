@@ -1,8 +1,8 @@
 use super::types::*;
 use crate::actions::TdAction;
 use crate::config::{TdConfig, TowerKind};
-use crate::events::TdEvent;
 use crate::observe::ObsWaveStatus;
+use crate::world::TowerId;
 use crate::TdGame;
 use rmcp::{
     ServerHandler,
@@ -10,7 +10,8 @@ use rmcp::{
     model::{CallToolResult, ServerCapabilities, ServerInfo},
     tool, tool_router,
 };
-use sim_server::{EventCursor, GameServer, MatchStatus, ServerConfig, SessionToken};
+use sim_server::{GameServer, MatchStatus, ServerConfig, SessionToken};
+use slotmap::{Key, KeyData};
 use std::sync::Arc;
 
 /// MCP Server for the Tower Defense game.
@@ -50,6 +51,16 @@ fn string_to_kind(s: &str) -> TowerKind {
     }
 }
 
+fn tower_id_to_string(id: TowerId) -> String {
+    id.data().as_ffi().to_string()
+}
+
+fn string_to_tower_id(s: &str) -> Result<TowerId, String> {
+    let ffi: u64 = s.parse().map_err(|_| format!("Invalid tower_id: {}", s))?;
+    let key_data = KeyData::from_ffi(ffi);
+    Ok(TowerId::from(key_data))
+}
+
 #[tool_router]
 impl TdMcpServer {
     /// Create a new Tower Defense match.
@@ -61,7 +72,7 @@ impl TdMcpServer {
         let game_config = TdConfig {
             tick_hz: 20,
             waves_total: params.waves,
-            gold_start: params.starting_gold,
+            player_count: params.required_players,
             ..TdConfig::default()
         };
 
@@ -116,17 +127,17 @@ impl TdMcpServer {
                 goal_description: "Mobs try to reach the goal (default: right side, x=31, y=16). Mobs pathfind around towers.".to_string(),
             },
             towers: TowerRules {
-                placement: "Use submit_action with PlaceTower to queue a tower build. Costs gold and takes build_time_ticks to complete. Cell is blocked immediately when build starts.".to_string(),
-                attack: "Towers automatically attack the nearest mob within range every fire_period. They deal damage per hit.".to_string(),
+                placement: "Use the place_tower tool to queue a tower build. Cost scales with wave number (base_cost * 1.12^wave). Cell is blocked immediately when build starts.".to_string(),
+                attack: "Towers automatically attack the nearest mob within range every fire_period. Damage scales with upgrade level (base_dmg * 1.15^level).".to_string(),
                 destruction: "Mobs attack adjacent towers. When a tower's HP reaches 0, it is destroyed and the cell becomes unblocked.".to_string(),
                 tower_types: vec![
                     TowerTypeInfo {
                         name: "Basic".to_string(),
                         cost: 15,
                         hp: 100,
-                        range: 3,
+                        range: 4,
                         damage: 5,
-                        description: "Standard attack tower. Fires at the nearest mob in range.".to_string(),
+                        description: "Standard attack tower. Base cost 15 (scales with wave). Base damage 5 (scales with upgrades). Range 4.".to_string(),
                     },
                 ],
             },
@@ -136,29 +147,34 @@ impl TdMcpServer {
                 combat: "Mobs attack towers that block their path. When adjacent to a blocking tower, they deal damage instead of moving.".to_string(),
             },
             waves: WaveRules {
-                progression: "The game consists of multiple waves. Each wave spawns a number of mobs. After all mobs in a wave are spawned and cleared, the next wave begins after a pause.".to_string(),
-                pause_between: "There is an inter_wave_pause between waves (also before the first wave), giving you time to build towers.".to_string(),
-                scaling: "Each wave has more mobs than the last: wave_size = wave_base_size + wave_size_growth * (wave_number - 1).".to_string(),
+                progression: "The game consists of multiple waves with exponential scaling. Mob HP and wave size grow each wave.".to_string(),
+                pause_between: "There is an inter_wave_pause between waves (also before the first wave), giving you time to build and upgrade towers.".to_string(),
+                scaling: "Mob HP: 10 * 1.15^wave * players. Wave size: 8 * 1.08^wave * players. Both scale linearly with player count.".to_string(),
             },
             economy: EconomyRules {
-                income: "You start with gold_start gold. Earn gold_per_mob_kill for each mob killed. Earn bonus gold when a wave ends: gold_per_wave_base + gold_per_wave_growth * (wave - 1).".to_string(),
-                spending: "Towers cost tower_cost gold. Gold is deducted when you queue a build, not when it completes.".to_string(),
+                income: "Starting gold: 50 + 30*(players-1). Wave reward: 25 * 1.12^wave * players. Kill reward: 1 * 1.08^wave. Income scales with player count.".to_string(),
+                spending: "Tower build cost: base_cost * 1.12^wave. Upgrade cost: 20 * 1.20^next_level. Gold is deducted immediately.".to_string(),
             },
             actions: vec![
                 ActionRule {
-                    name: "PlaceTower".to_string(),
-                    description: "Queue a tower to be built at the specified coordinates.".to_string(),
-                    parameters: "x: u16, y: u16 - grid coordinates. tower_type: string (optional, default 'Basic').".to_string(),
+                    name: "place_tower".to_string(),
+                    description: "Queue a tower to be built at the specified coordinates. Use the place_tower MCP tool directly.".to_string(),
+                    parameters: "match_id, session_token, intended_tick, x, y, tower_type (default 'Basic').".to_string(),
+                },
+                ActionRule {
+                    name: "upgrade_tower".to_string(),
+                    description: "Upgrade a tower to increase its damage. Cost: 20 * 1.20^(current_level+1). Use the upgrade_tower MCP tool directly.".to_string(),
+                    parameters: "match_id, session_token, intended_tick, tower_id (from observe response).".to_string(),
                 },
             ],
             tips: vec![
-                "Use the observe tool to see current game state including map size, spawn/goal positions, and all entity positions.".to_string(),
+                "Use the observe tool to see current game state including tower upgrade levels, costs, and damage.".to_string(),
                 "Build towers near the mob path to maximize damage. Mobs walk in a straight line from spawn to goal unless blocked.".to_string(),
                 "Place towers to create a maze - mobs will pathfind around them, giving towers more time to attack.".to_string(),
-                "You can completely block the path, but mobs will then attack your towers to break through. This can be a valid strategy if your towers can kill mobs fast enough.".to_string(),
-                "Check gold before building. If you don't have enough, you'll get an InsufficientGold event.".to_string(),
+                "Upgrade existing towers for more damage rather than always building new ones. Upgraded towers are more gold-efficient.".to_string(),
+                "Tower build cost increases each wave, so building early is cheaper.".to_string(),
                 "Watch the wave_status in observe to know when the next wave starts and how many mobs it will have.".to_string(),
-                "Poll events every 2-5 seconds to track what's happening (mob kills, tower destruction, wave starts/ends). Do NOT poll in a tight loop.".to_string(),
+                "Call observe every 2-5 seconds to track the full game state. Do NOT poll in a tight loop.".to_string(),
             ],
         };
 
@@ -230,21 +246,17 @@ impl TdMcpServer {
         Ok("Left match".to_string())
     }
 
-    /// Submit an action to the game.
-    #[tool(description = "Submit an action (e.g., place a tower). If intended_tick is not provided or has passed, executes on the next tick. Returns the actual scheduled tick.")]
-    async fn submit_action(
+    /// Place a tower on the map.
+    #[tool(description = "Place a tower at the given grid coordinates. Cost scales with wave number. If intended_tick has passed, executes on the next tick. Use 0 to execute immediately.")]
+    async fn place_tower(
         &self,
-        Parameters(params): Parameters<SubmitActionParams>,
+        Parameters(params): Parameters<PlaceTowerParams>,
     ) -> Result<String, String> {
-        let action = match params.action {
-            ActionParams::PlaceTower { x, y, tower_type } => TdAction::PlaceTower {
-                x,
-                y,
-                kind: string_to_kind(&tower_type),
-            },
+        let action = TdAction::PlaceTower {
+            x: params.x,
+            y: params.y,
+            kind: string_to_kind(&params.tower_type),
         };
-
-        let intended_tick = params.intended_tick.unwrap_or(0);
 
         let (action_id, scheduled_tick) = self
             .game_server
@@ -252,12 +264,39 @@ impl TdMcpServer {
                 params.match_id,
                 SessionToken(params.session_token),
                 action,
-                intended_tick,
+                params.intended_tick,
             )
             .await
-            .map_err(|e| format!("Failed to submit action: {}", e))?;
+            .map_err(|e| format!("Failed to place tower: {}", e))?;
 
-        Ok(serde_json::to_string(&SubmitActionResult {
+        Ok(serde_json::to_string(&ActionResult {
+            action_id,
+            scheduled_tick,
+        })
+        .unwrap())
+    }
+
+    /// Upgrade a tower to increase its damage.
+    #[tool(description = "Upgrade a tower to increase its damage. Cost: 20 * 1.20^(current_level+1). The tower_id is from the observe response.")]
+    async fn upgrade_tower(
+        &self,
+        Parameters(params): Parameters<UpgradeTowerParams>,
+    ) -> Result<String, String> {
+        let id = string_to_tower_id(&params.tower_id)?;
+        let action = TdAction::UpgradeTower { tower_id: id };
+
+        let (action_id, scheduled_tick) = self
+            .game_server
+            .submit_action(
+                params.match_id,
+                SessionToken(params.session_token),
+                action,
+                params.intended_tick,
+            )
+            .await
+            .map_err(|e| format!("Failed to upgrade tower: {}", e))?;
+
+        Ok(serde_json::to_string(&ActionResult {
             action_id,
             scheduled_tick,
         })
@@ -265,7 +304,7 @@ impl TdMcpServer {
     }
 
     /// Observe the current game state.
-    #[tool(description = "Get the full observation of the game state including map, entities, and wave info. Do NOT poll this in a tight loop — calling every 2-5 seconds is sufficient.")]
+    #[tool(description = "Get the full observation of the game state including map, entities, tower upgrade levels, and wave info. Do NOT poll this in a tight loop — calling every 2-5 seconds is sufficient.")]
     async fn observe(
         &self,
         Parameters(params): Parameters<ObserveParams>,
@@ -328,11 +367,15 @@ impl TdMcpServer {
                 .towers
                 .into_iter()
                 .map(|t| TowerInfo {
+                    id: tower_id_to_string(t.id),
                     x: t.x,
                     y: t.y,
                     hp: t.hp,
                     tower_type: kind_to_string(t.kind),
                     player_id: t.player_id,
+                    upgrade_level: t.upgrade_level,
+                    damage: t.damage,
+                    upgrade_cost: t.upgrade_cost,
                 })
                 .collect(),
             mobs: obs
@@ -359,80 +402,13 @@ impl TdMcpServer {
         .unwrap())
     }
 
-    /// Poll events from the game.
-    #[tool(description = "Poll events from the game starting at the given cursor position. Do NOT poll this in a tight loop — calling every 2-5 seconds is sufficient.")]
-    async fn poll_events(
-        &self,
-        Parameters(params): Parameters<PollEventsParams>,
-    ) -> Result<String, String> {
-        let (events, new_cursor) = self
-            .game_server
-            .poll_events(
-                params.match_id,
-                SessionToken(params.session_token),
-                EventCursor(params.cursor),
-            )
-            .await
-            .map_err(|e| format!("Failed to poll events: {}", e))?;
-
-        let events: Vec<_> = events
-            .into_iter()
-            .map(|e| GameEvent {
-                sequence: e.sequence,
-                tick: e.tick,
-                event: convert_event(e.event),
-            })
-            .collect();
-
-        Ok(serde_json::to_string(&PollEventsResult {
-            events,
-            next_cursor: new_cursor.0,
-        })
-        .unwrap())
-    }
-
-    /// Get the current tick of a match.
-    #[tool(description = "Get the current tick number of a match")]
-    async fn current_tick(
-        &self,
-        Parameters(params): Parameters<CurrentTickParams>,
-    ) -> Result<String, String> {
-        let tick = self
-            .game_server
-            .current_tick(params.match_id)
-            .await
-            .map_err(|e| format!("Failed to get tick: {}", e))?;
-
-        Ok(serde_json::to_string(&CurrentTickResult { tick }).unwrap())
-    }
-}
-
-fn convert_event(event: TdEvent) -> EventData {
-    match event {
-        TdEvent::TowerPlaced { x, y, kind, .. } => EventData::TowerPlaced {
-            x,
-            y,
-            tower_type: kind_to_string(kind),
-        },
-        TdEvent::TowerDestroyed { x, y, .. } => EventData::TowerDestroyed { x, y },
-        TdEvent::MobLeaked { .. } => EventData::MobLeaked,
-        TdEvent::MobKilled { x, y, .. } => EventData::MobKilled { x, y },
-        TdEvent::WaveStarted { wave } => EventData::WaveStarted { wave },
-        TdEvent::WaveEnded { wave } => EventData::WaveEnded { wave },
-        TdEvent::BuildQueued { x, y, kind } => EventData::BuildQueued {
-            x,
-            y,
-            tower_type: kind_to_string(kind),
-        },
-        TdEvent::InsufficientGold { cost, have } => EventData::InsufficientGold { cost, have },
-    }
 }
 
 impl ServerHandler for TdMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Tower Defense MCP Server. Create matches, join as players, place towers (Basic or Wall), and defend against waves of mobs!".into()
+                "Tower Defense MCP Server. Create matches, join as players, place towers, upgrade them, and defend against waves of mobs!".into()
             ),
             capabilities: ServerCapabilities::builder()
                 .enable_tools()

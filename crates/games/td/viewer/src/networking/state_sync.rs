@@ -1,21 +1,23 @@
 //! State synchronization systems.
+//!
+//! Game state and match list are received via SSE (Server-Sent Events) from the
+//! viewer server's streaming endpoints. This enables efficient fan-out to many
+//! concurrent viewers with a single upstream poll per stream.
 
 use bevy::prelude::*;
 use crate::game::{
-    ConnectionState, ConnectionStatus, GameEvents, GameStateCache, MatchList,
-    PollingTimers, UiState, MobInfo, TowerInfo, PendingBuildInfo, WaveStatus,
+    ConnectionState, ConnectionStatus, GameStateCache, MatchList,
+    UiState, MobInfo, TowerInfo, PendingBuildInfo, WaveStatus,
     MatchInfo,
 };
 use crate::networking::{
-    client::{
-        create_leave_match_request, create_list_matches_request, create_observe_request,
-        create_poll_events_request, create_spectate_match_request, parse_tool_result,
-    },
-    ResponseChannels, RequestState,
+    client::{stream_url, match_list_stream_url},
+    SseChannel, SseConnectionState,
 };
 use serde::Deserialize;
+use wasm_bindgen::prelude::*;
 
-/// Response structures from MCP server.
+/// Response structures from the SSE observe stream.
 #[derive(Deserialize, Debug)]
 struct ObserveResponse {
     tick: u64,
@@ -77,343 +79,305 @@ struct PendingBuildResponse {
 }
 
 #[derive(Deserialize, Debug)]
-struct PollEventsResponse {
-    events: Vec<crate::game::GameEvent>,
-    next_cursor: u64,
-}
-
-#[derive(Deserialize, Debug)]
 struct ListMatchesResponse {
     matches: Vec<MatchInfo>,
 }
 
-#[derive(Deserialize, Debug)]
-struct SpectateMatchResponse {
-    session_token: u64,
-}
-
-/// Poll the observe endpoint periodically.
-pub fn poll_observe(
-    time: Res<Time>,
-    mut timers: ResMut<PollingTimers>,
+/// Manage the SSE EventSource connection for game observation.
+/// Opens a connection when entering Spectating state, closes when leaving.
+pub fn manage_sse_connection(
     connection: Res<ConnectionState>,
     ui_state: Res<UiState>,
-    channels: Res<ResponseChannels>,
-    mut request_state: ResMut<RequestState>,
+    sse_channel: Res<SseChannel>,
+    mut sse_state: ResMut<SseConnectionState>,
 ) {
-    // Only poll when spectating
-    if *ui_state != UiState::Spectating {
-        return;
+    match *ui_state {
+        UiState::Spectating => {
+            if let Some(match_id) = connection.match_id {
+                // Check if we need to open a new SSE connection
+                if sse_state.connected_match_id != Some(match_id) {
+                    // Close existing connection if any
+                    if sse_state.is_connected {
+                        close_event_source();
+                        sse_state.is_connected = false;
+                        sse_state.connected_match_id = None;
+                    }
+
+                    // Open new SSE connection
+                    let url = stream_url(&connection.server_url, match_id);
+                    let tx = sse_channel.observe_tx.clone();
+
+                    open_event_source(&url, tx);
+                    sse_state.connected_match_id = Some(match_id);
+                    sse_state.is_connected = true;
+                    tracing::info!("SSE: connected to match {} at {}", match_id, url);
+                }
+            }
+        }
+        UiState::MatchSelection => {
+            // Close SSE connection when returning to match selection
+            if sse_state.is_connected {
+                close_event_source();
+                sse_state.is_connected = false;
+                sse_state.connected_match_id = None;
+                tracing::info!("SSE: disconnected (returned to match selection)");
+            }
+        }
     }
-
-    timers.observe_timer.tick(time.delta());
-
-    if !timers.observe_timer.just_finished() {
-        return;
-    }
-
-    // Don't start new request if one is pending
-    if request_state.observe_pending {
-        return;
-    }
-
-    // Need match_id and session_token
-    let (match_id, session_token) = match (connection.match_id, connection.session_token) {
-        (Some(m), Some(s)) => (m, s),
-        _ => return,
-    };
-
-    request_state.observe_pending = true;
-    let request = create_observe_request(&connection.server_url, match_id, session_token);
-    let tx = channels.observe_tx.clone();
-
-    ehttp::fetch(request, move |result| {
-        let _ = tx.send(result.map_err(|e| e.to_string()));
-    });
 }
 
-/// Poll the events endpoint periodically.
-pub fn poll_events(
-    time: Res<Time>,
-    mut timers: ResMut<PollingTimers>,
+/// Manage the SSE EventSource connection for the match list.
+/// Opens when in MatchSelection state, closes when leaving.
+pub fn manage_match_list_sse(
     connection: Res<ConnectionState>,
     ui_state: Res<UiState>,
-    channels: Res<ResponseChannels>,
-    mut request_state: ResMut<RequestState>,
+    sse_channel: Res<SseChannel>,
+    mut sse_state: ResMut<SseConnectionState>,
 ) {
-    // Only poll when spectating
-    if *ui_state != UiState::Spectating {
-        return;
+    match *ui_state {
+        UiState::MatchSelection => {
+            if !sse_state.match_list_connected {
+                let url = match_list_stream_url(&connection.server_url);
+                let tx = sse_channel.match_list_tx.clone();
+                open_match_list_event_source(&url, tx);
+                sse_state.match_list_connected = true;
+                tracing::info!("SSE: connected to match list at {}", url);
+            }
+        }
+        UiState::Spectating => {
+            if sse_state.match_list_connected {
+                close_match_list_event_source();
+                sse_state.match_list_connected = false;
+                tracing::info!("SSE: disconnected match list (entered spectating)");
+            }
+        }
     }
+}
 
-    timers.events_timer.tick(time.delta());
+/// Open an EventSource connection to the SSE stream for game observation.
+fn open_event_source(url: &str, tx: crossbeam_channel::Sender<String>) {
+    let url = url.to_string();
 
-    if !timers.events_timer.just_finished() {
-        return;
-    }
+    // Use wasm_bindgen to create an EventSource in the browser
+    let closure = Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
+        if let Some(data) = event.data().as_string() {
+            let _ = tx.send(data);
+        }
+    }) as Box<dyn FnMut(web_sys::MessageEvent)>);
 
-    // Don't start new request if one is pending
-    if request_state.events_pending {
-        return;
-    }
-
-    // Need match_id and session_token
-    let (match_id, session_token) = match (connection.match_id, connection.session_token) {
-        (Some(m), Some(s)) => (m, s),
-        _ => return,
-    };
-
-    request_state.events_pending = true;
-    let request = create_poll_events_request(
-        &connection.server_url,
-        match_id,
-        session_token,
-        connection.event_cursor,
+    // Store the EventSource globally so we can close it later
+    let js_code = format!(
+        r#"
+        if (window.__td_sse) {{
+            window.__td_sse.close();
+        }}
+        window.__td_sse = new EventSource('{}');
+        window.__td_sse.onmessage = function(e) {{
+            window.__td_sse_callback(e);
+        }};
+        window.__td_sse.onerror = function(e) {{
+            console.warn('SSE connection error, will auto-reconnect');
+        }};
+        "#,
+        url
     );
-    let tx = channels.events_tx.clone();
 
-    ehttp::fetch(request, move |result| {
-        let _ = tx.send(result.map_err(|e| e.to_string()));
-    });
+    // Set the callback on window and eval the code
+    let window = web_sys::window().unwrap();
+    js_sys::Reflect::set(
+        &window,
+        &JsValue::from_str("__td_sse_callback"),
+        closure.as_ref(),
+    ).unwrap();
+
+    // Prevent the closure from being dropped (it needs to live as long as the EventSource)
+    closure.forget();
+
+    js_sys::eval(&js_code).unwrap();
 }
 
-/// Poll the match list periodically when in match selection.
-pub fn poll_match_list(
-    time: Res<Time>,
-    connection: Res<ConnectionState>,
-    ui_state: Res<UiState>,
-    mut match_list: ResMut<MatchList>,
-    channels: Res<ResponseChannels>,
-    mut request_state: ResMut<RequestState>,
-) {
-    // Only poll when in match selection
-    if *ui_state != UiState::MatchSelection {
-        return;
-    }
-
-    // Don't start new request if one is pending
-    if request_state.match_list_pending {
-        return;
-    }
-
-    // Poll every 2 seconds
-    let current_time = time.elapsed_secs_f64();
-    if current_time - match_list.last_fetch_time < 2.0 {
-        return;
-    }
-
-    match_list.last_fetch_time = current_time;
-    request_state.match_list_pending = true;
-    let request = create_list_matches_request(&connection.server_url);
-    let tx = channels.match_list_tx.clone();
-
-    ehttp::fetch(request, move |result| {
-        let _ = tx.send(result.map_err(|e| e.to_string()));
-    });
+/// Close the active EventSource connection for game observation.
+fn close_event_source() {
+    let _ = js_sys::eval(
+        r#"
+        if (window.__td_sse) {
+            window.__td_sse.close();
+            window.__td_sse = null;
+        }
+        "#,
+    );
 }
 
-/// Process completed HTTP responses.
+/// Open an EventSource connection to the SSE stream for the match list.
+fn open_match_list_event_source(url: &str, tx: crossbeam_channel::Sender<String>) {
+    let url = url.to_string();
+
+    let closure = Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
+        if let Some(data) = event.data().as_string() {
+            let _ = tx.send(data);
+        }
+    }) as Box<dyn FnMut(web_sys::MessageEvent)>);
+
+    let js_code = format!(
+        r#"
+        if (window.__td_match_list_sse) {{
+            window.__td_match_list_sse.close();
+        }}
+        window.__td_match_list_sse = new EventSource('{}');
+        window.__td_match_list_sse.onmessage = function(e) {{
+            window.__td_match_list_sse_callback(e);
+        }};
+        window.__td_match_list_sse.onerror = function(e) {{
+            console.warn('Match list SSE connection error, will auto-reconnect');
+        }};
+        "#,
+        url
+    );
+
+    let window = web_sys::window().unwrap();
+    js_sys::Reflect::set(
+        &window,
+        &JsValue::from_str("__td_match_list_sse_callback"),
+        closure.as_ref(),
+    ).unwrap();
+
+    closure.forget();
+
+    js_sys::eval(&js_code).unwrap();
+}
+
+/// Close the active EventSource connection for the match list.
+fn close_match_list_event_source() {
+    let _ = js_sys::eval(
+        r#"
+        if (window.__td_match_list_sse) {
+            window.__td_match_list_sse.close();
+            window.__td_match_list_sse = null;
+        }
+        "#,
+    );
+}
+
+/// Process SSE messages for both game observation and match list.
 pub fn process_responses(
-    channels: Res<ResponseChannels>,
-    mut request_state: ResMut<RequestState>,
+    sse_channel: Res<SseChannel>,
     mut game_state: ResMut<GameStateCache>,
     mut connection: ResMut<ConnectionState>,
-    mut events: ResMut<GameEvents>,
     mut match_list: ResMut<MatchList>,
     mut ui_state: ResMut<UiState>,
 ) {
-    // Process observe response
-    if let Ok(result) = channels.observe_rx.try_recv() {
-        request_state.observe_pending = false;
-
-        match result {
-            Ok(response) => {
-                match parse_tool_result::<ObserveResponse>(&response) {
-                    Ok(obs) => {
-                        game_state.tick = obs.tick;
-                        game_state.tick_hz = obs.ticks_per_second;
-                        game_state.map_width = obs.map_width;
-                        game_state.map_height = obs.map_height;
-                        game_state.spawn = (obs.spawn.x, obs.spawn.y);
-                        game_state.goal = (obs.goal.x, obs.goal.y);
-                        game_state.max_leaks = obs.max_leaks;
-                        game_state.tower_cost = obs.tower_cost;
-                        game_state.tower_range = obs.tower_range;
-                        game_state.tower_damage = obs.tower_damage;
-                        game_state.build_time_ticks = obs.build_time_ticks;
-                        game_state.gold_per_mob_kill = obs.gold_per_mob_kill;
-                        game_state.gold = obs.gold;
-                        game_state.leaks = obs.leaks;
-                        game_state.current_wave = obs.current_wave;
-                        game_state.waves_total = obs.waves_total;
-                        game_state.wave_status = match obs.wave_status {
-                            WaveStatusResponse::Pause { until_tick, next_wave_size } => {
-                                WaveStatus::Pause { until_tick, next_wave_size }
-                            }
-                            WaveStatusResponse::InWave { spawned, wave_size, next_spawn_tick } => {
-                                WaveStatus::InWave { spawned, wave_size, next_spawn_tick }
-                            }
-                        };
-                        game_state.towers = obs.towers.into_iter().map(|t| TowerInfo {
-                            x: t.x,
-                            y: t.y,
-                            hp: t.hp,
-                            player_id: t.player_id,
-                        }).collect();
-                        game_state.mobs = obs.mobs.into_iter().map(|m| MobInfo {
-                            x: m.x,
-                            y: m.y,
-                            hp: m.hp,
-                        }).collect();
-                        game_state.build_queue = obs.build_queue.into_iter().map(|b| PendingBuildInfo {
-                            x: b.x,
-                            y: b.y,
-                            complete_tick: b.complete_tick,
-                            player_id: b.player_id,
-                        }).collect();
-                        game_state.initialized = true;
-
-                        connection.status = ConnectionStatus::Connected;
+    // Process SSE observe messages (drain all available)
+    while let Ok(data) = sse_channel.observe_rx.try_recv() {
+        match serde_json::from_str::<ObserveResponse>(&data) {
+            Ok(obs) => {
+                game_state.tick = obs.tick;
+                game_state.tick_hz = obs.ticks_per_second;
+                game_state.map_width = obs.map_width;
+                game_state.map_height = obs.map_height;
+                game_state.spawn = (obs.spawn.x, obs.spawn.y);
+                game_state.goal = (obs.goal.x, obs.goal.y);
+                game_state.max_leaks = obs.max_leaks;
+                game_state.tower_cost = obs.tower_cost;
+                game_state.tower_range = obs.tower_range;
+                game_state.tower_damage = obs.tower_damage;
+                game_state.build_time_ticks = obs.build_time_ticks;
+                game_state.gold_per_mob_kill = obs.gold_per_mob_kill;
+                game_state.gold = obs.gold;
+                game_state.leaks = obs.leaks;
+                game_state.current_wave = obs.current_wave;
+                game_state.waves_total = obs.waves_total;
+                game_state.wave_status = match obs.wave_status {
+                    WaveStatusResponse::Pause { until_tick, next_wave_size } => {
+                        WaveStatus::Pause { until_tick, next_wave_size }
                     }
-                    Err(e) => {
-                        tracing::error!("Failed to parse observe response: {}", e);
-                        if e.contains("not found") {
-                            tracing::info!("Match no longer exists, returning to match selection");
-                            leave_spectate(&mut connection, &mut game_state, &mut events, &mut ui_state);
-                            return;
-                        }
-                        connection.status = ConnectionStatus::Error(e);
+                    WaveStatusResponse::InWave { spawned, wave_size, next_spawn_tick } => {
+                        WaveStatus::InWave { spawned, wave_size, next_spawn_tick }
                     }
-                }
+                };
+                game_state.towers = obs.towers.into_iter().map(|t| TowerInfo {
+                    x: t.x,
+                    y: t.y,
+                    hp: t.hp,
+                    player_id: t.player_id,
+                }).collect();
+                game_state.mobs = obs.mobs.into_iter().map(|m| MobInfo {
+                    x: m.x,
+                    y: m.y,
+                    hp: m.hp,
+                }).collect();
+                game_state.build_queue = obs.build_queue.into_iter().map(|b| PendingBuildInfo {
+                    x: b.x,
+                    y: b.y,
+                    complete_tick: b.complete_tick,
+                    player_id: b.player_id,
+                }).collect();
+                game_state.initialized = true;
+
+                connection.status = ConnectionStatus::Connected;
             }
             Err(e) => {
-                tracing::error!("Observe request failed: {}", e);
-                if e.contains("not found") {
-                    tracing::info!("Match no longer exists, returning to match selection");
-                    leave_spectate(&mut connection, &mut game_state, &mut events, &mut ui_state);
-                    return;
+                // Check if this is an error message from the server
+                if data.contains("\"error\"") {
+                    if data.contains("not found") {
+                        tracing::info!("Match no longer exists, returning to match selection");
+                        leave_spectate(&mut connection, &mut game_state, &mut ui_state);
+                        return;
+                    }
+                    tracing::warn!("SSE error from server: {}", data);
+                } else {
+                    tracing::warn!("Failed to parse SSE observe data: {} - data: {}", e, data);
                 }
-                connection.status = ConnectionStatus::Error(e);
             }
         }
     }
 
-    // Process events response
-    if let Ok(result) = channels.events_rx.try_recv() {
-        request_state.events_pending = false;
-
-        match result {
-            Ok(response) => {
-                match parse_tool_result::<PollEventsResponse>(&response) {
-                    Ok(poll_result) => {
-                        connection.event_cursor = poll_result.next_cursor;
-                        events.events.extend(poll_result.events);
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to parse events response: {}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Events request failed: {}", e);
-            }
-        }
+    // Process SSE match list messages (drain all, keep latest)
+    let mut latest_match_data = None;
+    while let Ok(data) = sse_channel.match_list_rx.try_recv() {
+        latest_match_data = Some(data);
     }
-
-    // Process match list response
-    if let Ok(result) = channels.match_list_rx.try_recv() {
-        request_state.match_list_pending = false;
-
-        match result {
-            Ok(response) => {
-                match parse_tool_result::<ListMatchesResponse>(&response) {
-                    Ok(list_result) => {
-                        match_list.matches = list_result.matches;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to parse match list response: {}", e);
-                    }
-                }
+    if let Some(data) = latest_match_data {
+        match serde_json::from_str::<ListMatchesResponse>(&data) {
+            Ok(list_result) => {
+                match_list.matches = list_result.matches;
             }
             Err(e) => {
-                tracing::warn!("Match list request failed: {}", e);
-            }
-        }
-    }
-
-    // Process spectate match response
-    if let Ok((match_id, result)) = channels.join_match_rx.try_recv() {
-        request_state.join_match_pending = false;
-
-        match result {
-            Ok(response) => {
-                match parse_tool_result::<SpectateMatchResponse>(&response) {
-                    Ok(spectate_result) => {
-                        connection.match_id = Some(match_id);
-                        connection.session_token = Some(spectate_result.session_token);
-                        connection.event_cursor = 0;
-                        connection.status = ConnectionStatus::Connecting;
-                        *ui_state = UiState::Spectating;
-                        // Update browser URL so back button works
-                        crate::ui::push_browser_state(&format!("match/{}", match_id));
-                        tracing::info!("Spectating match {} with token {}", match_id, spectate_result.session_token);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to spectate match: {}", e);
-                        connection.status = ConnectionStatus::Error(e);
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!("Spectate match request failed: {}", e);
-                connection.status = ConnectionStatus::Error(e);
+                tracing::warn!("Failed to parse match list SSE data: {} - data: {}", e, data);
             }
         }
     }
 }
 
-/// Spectate a match by ID.
+/// Start spectating a match by ID.
+/// The SSE connection is managed by manage_sse_connection system.
 pub fn spectate_match(
-    channels: &ResponseChannels,
-    request_state: &mut RequestState,
-    connection: &ConnectionState,
+    connection: &mut ConnectionState,
+    ui_state: &mut UiState,
     match_id: u64,
 ) {
-    if request_state.join_match_pending {
-        return; // Already requesting
-    }
-
-    request_state.join_match_pending = true;
-    let request = create_spectate_match_request(&connection.server_url, match_id);
-    let tx = channels.join_match_tx.clone();
-
-    ehttp::fetch(request, move |result| {
-        let _ = tx.send((match_id, result.map_err(|e| e.to_string())));
-    });
+    connection.match_id = Some(match_id);
+    connection.status = ConnectionStatus::Connecting;
+    *ui_state = UiState::Spectating;
+    crate::ui::push_browser_state(&format!("match/{}", match_id));
+    tracing::info!("Starting spectate for match {}", match_id);
 }
 
 /// Leave the current spectator session and return to match selection.
 pub fn leave_spectate(
     connection: &mut ConnectionState,
     game_state: &mut GameStateCache,
-    events: &mut GameEvents,
     ui_state: &mut UiState,
 ) {
-    // Fire-and-forget the leave request to clean up the server-side session
-    if let (Some(match_id), Some(session_token)) = (connection.match_id, connection.session_token) {
-        let request = create_leave_match_request(&connection.server_url, match_id, session_token);
-        ehttp::fetch(request, |_| {});
-    }
+    // SSE connection will be closed by manage_sse_connection system
+    // when it sees UiState change to MatchSelection
 
     // Reset connection state
     connection.match_id = None;
     connection.session_token = None;
-    connection.event_cursor = 0;
     connection.status = ConnectionStatus::Disconnected;
 
     // Reset game state
     *game_state = GameStateCache::default();
-    events.events.clear();
 
     // Switch back to match selection
     *ui_state = UiState::MatchSelection;
