@@ -31,18 +31,6 @@ pub struct JoinMatchResult {
     pub player_id: u8,
 }
 
-/// Parameters for spectating a match.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SpectateMatchParams {
-    pub match_id: u64,
-}
-
-/// Result of spectating a match.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SpectateMatchResult {
-    pub session_token: u64,
-}
-
 /// Parameters for leaving a match.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LeaveMatchParams {
