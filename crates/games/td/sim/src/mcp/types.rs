@@ -105,6 +105,38 @@ fn default_max_wait() -> u64 {
     5000
 }
 
+/// Parameters for getting buildable cells.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GetBuildableCellsParams {
+    pub match_id: u64,
+    pub session_token: u64,
+}
+
+/// Result of getting buildable cells.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GetBuildableCellsResult {
+    pub map_width: u16,
+    pub map_height: u16,
+    pub buildable_cells: Vec<Position>,
+}
+
+/// Parameters for getting the current mob path.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GetCurrentPathParams {
+    pub match_id: u64,
+    pub session_token: u64,
+}
+
+/// Result of getting the current mob path.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GetCurrentPathResult {
+    /// Whether a path from spawn to goal currently exists.
+    pub path_exists: bool,
+    /// The sequence of cells mobs will traverse from spawn to goal.
+    /// Empty if path is blocked (mobs will attack towers to create a path).
+    pub path: Vec<Position>,
+}
+
 /// Game rules and mechanics explanation.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RulesResult {

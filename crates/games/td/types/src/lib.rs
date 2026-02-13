@@ -108,6 +108,7 @@ pub struct TdObservation {
     pub waves_total: u8,
     pub wave_status: WaveStatus,
 
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub walkable: Vec<bool>,
 
     pub towers: Vec<TowerInfo>,

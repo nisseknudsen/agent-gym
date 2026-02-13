@@ -14,11 +14,21 @@ pub fn try_queue_build(
     events: &mut Vec<TdEvent>,
 ) -> bool {
     if !state.world.grid.in_bounds(x, y) {
+        events.push(TdEvent::BuildRejected {
+            x,
+            y,
+            reason: "out of bounds".to_string(),
+        });
         return false;
     }
 
     let idx = state.world.grid.idx(x, y);
     if state.world.grid.is_blocked_idx(idx) {
+        events.push(TdEvent::BuildRejected {
+            x,
+            y,
+            reason: "cell is blocked".to_string(),
+        });
         return false;
     }
 

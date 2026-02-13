@@ -41,4 +41,9 @@ pub enum TdEvent {
         id: TowerId,
         new_level: u8,
     },
+    BuildRejected {
+        x: u16,
+        y: u16,
+        reason: String,
+    },
 }
