@@ -25,14 +25,26 @@ pub struct Grid {
     pub width: u16,
     pub height: u16,
     cells: Vec<CellState>,
+    pub walkable: Vec<bool>,
 }
 
 impl Grid {
     pub fn new(width: u16, height: u16) -> Self {
+        let size = (width as usize) * (height as usize);
+        Self {
+            width,
+            height,
+            cells: vec![CellState::Empty; size],
+            walkable: vec![true; size],
+        }
+    }
+
+    pub fn from_terrain(width: u16, height: u16, walkable: Vec<bool>) -> Self {
         Self {
             width,
             height,
             cells: vec![CellState::Empty; (width as usize) * (height as usize)],
+            walkable,
         }
     }
 
@@ -59,7 +71,7 @@ impl Grid {
 
     #[inline]
     pub fn is_blocked_idx(&self, idx: usize) -> bool {
-        self.cells[idx].is_blocked()
+        !self.walkable[idx] || self.cells[idx].is_blocked()
     }
 }
 
@@ -123,6 +135,15 @@ impl World {
             build_queue: VecDeque::new(),
         }
     }
+
+    pub fn from_terrain(width: u16, height: u16, walkable: Vec<bool>) -> Self {
+        Self {
+            towers: SlotMap::with_key(),
+            mobs: SlotMap::with_key(),
+            grid: Grid::from_terrain(width, height, walkable),
+            build_queue: VecDeque::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -143,6 +164,25 @@ impl TdState {
         let gold_start = config.gold_start(config.player_count);
         let initial_pause_ticks = config.duration_to_ticks(config.inter_wave_pause);
         let world = World::new(config.width, config.height);
+        Self {
+            tick: 0,
+            world,
+            current_wave: 0,
+            phase: WavePhase::Pause {
+                until_tick: initial_pause_ticks,
+            },
+            leaks: 0,
+            dist: vec![u32::MAX; size],
+            gold: gold_start,
+            config,
+        }
+    }
+
+    pub fn with_terrain(config: TdConfig, walkable: Vec<bool>) -> Self {
+        let size = (config.width as usize) * (config.height as usize);
+        let gold_start = config.gold_start(config.player_count);
+        let initial_pause_ticks = config.duration_to_ticks(config.inter_wave_pause);
+        let world = World::from_terrain(config.width, config.height, walkable);
         Self {
             tick: 0,
             world,

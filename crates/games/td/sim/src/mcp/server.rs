@@ -1,8 +1,7 @@
 use super::types::*;
 use crate::actions::TdAction;
-use crate::config::{TdConfig, TowerKind};
-use crate::observe::ObsWaveStatus;
-use crate::world::TowerId;
+use crate::config::TdConfig;
+use crate::observe;
 use crate::TdGame;
 use rmcp::{
     ServerHandler,
@@ -11,7 +10,6 @@ use rmcp::{
     tool, tool_router,
 };
 use sim_server::{GameServer, MatchStatus, ObserveNextError, ServerConfig, SessionToken};
-use slotmap::{Key, KeyData};
 use std::sync::Arc;
 
 /// MCP Server for the Tower Defense game.
@@ -37,110 +35,6 @@ impl TdMcpServer {
         };
         let game_server = Arc::new(GameServer::<TdGame>::new(config));
         Self::new(game_server)
-    }
-}
-
-fn kind_to_string(kind: TowerKind) -> String {
-    match kind {
-        TowerKind::Basic => "Basic".to_string(),
-    }
-}
-
-fn string_to_kind(s: &str) -> TowerKind {
-    match s {
-        _ => TowerKind::Basic,
-    }
-}
-
-fn tower_id_to_string(id: TowerId) -> String {
-    id.data().as_ffi().to_string()
-}
-
-fn string_to_tower_id(s: &str) -> Result<TowerId, String> {
-    let ffi: u64 = s.parse().map_err(|_| format!("Invalid tower_id: {}", s))?;
-    let key_data = KeyData::from_ffi(ffi);
-    Ok(TowerId::from(key_data))
-}
-
-fn transform_obs(obs: crate::observe::TdObservation) -> ObserveResult {
-    let wave_status = match obs.wave_status {
-        ObsWaveStatus::Pause {
-            until_tick,
-            next_wave_size,
-        } => WaveStatus::Pause {
-            until_tick,
-            next_wave_size,
-        },
-        ObsWaveStatus::InWave {
-            spawned,
-            wave_size,
-            next_spawn_tick,
-        } => WaveStatus::InWave {
-            spawned,
-            wave_size,
-            next_spawn_tick,
-        },
-    };
-
-    ObserveResult {
-        tick: obs.tick,
-        ticks_per_second: obs.tick_hz,
-        map_width: obs.map_width,
-        map_height: obs.map_height,
-        spawn: Position {
-            x: obs.spawn.0,
-            y: obs.spawn.1,
-        },
-        goal: Position {
-            x: obs.goal.0,
-            y: obs.goal.1,
-        },
-        max_leaks: obs.max_leaks,
-        tower_cost: obs.tower_cost,
-        tower_range: obs.tower_range,
-        tower_damage: obs.tower_damage,
-        build_time_ticks: obs.build_time_ticks,
-        gold_per_mob_kill: obs.gold_per_mob_kill,
-        gold: obs.gold,
-        leaks: obs.leaks,
-        current_wave: obs.current_wave,
-        waves_total: obs.waves_total,
-        wave_status,
-        towers: obs
-            .towers
-            .into_iter()
-            .map(|t| TowerInfo {
-                id: tower_id_to_string(t.id),
-                x: t.x,
-                y: t.y,
-                hp: t.hp,
-                tower_type: kind_to_string(t.kind),
-                player_id: t.player_id,
-                upgrade_level: t.upgrade_level,
-                damage: t.damage,
-                upgrade_cost: t.upgrade_cost,
-            })
-            .collect(),
-        mobs: obs
-            .mobs
-            .into_iter()
-            .map(|m| MobInfo {
-                x: m.x,
-                y: m.y,
-                hp: m.hp,
-            })
-            .collect(),
-        build_queue: obs
-            .build_queue
-            .into_iter()
-            .map(|b| PendingBuildInfo {
-                x: b.x,
-                y: b.y,
-                tower_type: kind_to_string(b.kind),
-                complete_tick: b.complete_tick,
-                player_id: b.player_id,
-            })
-            .collect(),
     }
 }
 
@@ -204,10 +98,10 @@ impl TdMcpServer {
             win_condition: "Complete all waves without exceeding the maximum number of leaks (mobs reaching the goal).".to_string(),
             lose_condition: "If more than max_leaks mobs reach the goal, you lose.".to_string(),
             map: MapRules {
-                description: "A 2D grid where mobs travel from spawn to goal. Towers can be placed on any unoccupied cell.".to_string(),
-                default_size: "32x32 cells".to_string(),
-                spawn_description: "Mobs spawn at the spawn point (default: left side, x=0, y=16).".to_string(),
-                goal_description: "Mobs try to reach the goal (default: right side, x=31, y=16). Mobs pathfind around towers.".to_string(),
+                description: "A 2D grid with procedurally generated terrain. Each cell is either walkable (path) or non-walkable (wall). Mobs only travel on walkable cells. Towers can only be placed on walkable, unoccupied cells. The terrain is generated from a maze and dilated into organic paths.".to_string(),
+                default_size: "30x30 cells (maze_size=10, scale factor 3)".to_string(),
+                spawn_description: "Mobs spawn at the Start tile determined by map generation. Check the 'spawn' field in observations.".to_string(),
+                goal_description: "Mobs try to reach the Goal tile determined by map generation. Check the 'goal' field in observations. Mobs pathfind along walkable cells around towers.".to_string(),
             },
             towers: TowerRules {
                 placement: "Use the place_tower tool to queue a tower build. Cost scales with wave number (base_cost * 1.12^wave). Cell is blocked immediately when build starts.".to_string(),
@@ -254,10 +148,11 @@ impl TdMcpServer {
                 "*** CRITICAL: observe_next is READ-ONLY and DOES NOT CONTROL the simulation. The server ticks at a fixed rate regardless of your calls ***".to_string(),
                 "*** Calling observe_next faster/slower does NOT speed up/slow down the game. You are only polling for state ***".to_string(),
                 "Use observe_next to stream game state updates. Pass after_tick=0 for the first call.".to_string(),
-                "IMPORTANT: Always pass the tick value from the previous response. If you repeat the same after_tick, you WILL be forced to wait - this prevents spam.".to_string(),
+                "IMPORTANT: Always pass the tick value from the previous response. If you repeat the same after_tick, you WILL be forced to wait for new data - this prevents spam.".to_string(),
                 "Your actions (place_tower, upgrade_tower) are independent of observe_next - submit them with intended_tick and the server will execute them.".to_string(),
-                "Build towers near the mob path to maximize damage. Mobs walk in a straight line from spawn to goal unless blocked.".to_string(),
-                "Place towers to create a maze - mobs will pathfind around them, giving towers more time to attack.".to_string(),
+                "The map has terrain walls and walkable paths. Use the 'walkable' array in observations to see which cells are available. Towers can only be placed on walkable cells.".to_string(),
+                "Build towers along the walkable path to maximize damage. Mobs pathfind through walkable terrain toward the goal.".to_string(),
+                "Place towers strategically on walkable cells to create longer paths - mobs will pathfind around them.".to_string(),
                 "Upgrade existing towers for more damage rather than always building new ones. Upgraded towers are more gold-efficient.".to_string(),
                 "Tower build cost increases each wave, so building early is cheaper.".to_string(),
                 "Watch the wave_status in observe_next to know when the next wave starts and how many mobs it will have.".to_string(),
@@ -323,7 +218,7 @@ impl TdMcpServer {
         let action = TdAction::PlaceTower {
             x: params.x,
             y: params.y,
-            kind: string_to_kind(&params.tower_type),
+            kind: observe::string_to_kind(&params.tower_type),
         };
 
         let (action_id, scheduled_tick) = self
@@ -350,7 +245,7 @@ impl TdMcpServer {
         &self,
         Parameters(params): Parameters<UpgradeTowerParams>,
     ) -> Result<String, String> {
-        let id = string_to_tower_id(&params.tower_id)?;
+        let id = observe::string_to_tower_id(&params.tower_id)?;
         let action = TdAction::UpgradeTower { tower_id: id };
 
         let (action_id, scheduled_tick) = self
@@ -400,7 +295,7 @@ impl TdMcpServer {
 
         let result = ObserveNextResult {
             timed_out,
-            observation: transform_obs(obs),
+            observation: obs,
         };
 
         Ok(serde_json::to_string(&result).unwrap())

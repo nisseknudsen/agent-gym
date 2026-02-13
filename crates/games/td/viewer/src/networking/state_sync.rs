@@ -7,81 +7,14 @@
 use bevy::prelude::*;
 use crate::game::{
     ConnectionState, ConnectionStatus, GameStateCache, MatchList,
-    UiState, MobInfo, TowerInfo, PendingBuildInfo, WaveStatus,
-    MatchInfo,
+    UiState,
 };
 use crate::networking::{
     client::{stream_url, match_list_stream_url},
     SseChannel, SseConnectionState,
 };
-use serde::Deserialize;
+use td_types::{TdObservation, ListMatchesResult};
 use wasm_bindgen::prelude::*;
-
-/// Response structures from the SSE observe stream.
-#[derive(Deserialize, Debug)]
-struct ObserveResponse {
-    tick: u64,
-    ticks_per_second: u32,
-    map_width: u16,
-    map_height: u16,
-    spawn: Position,
-    goal: Position,
-    max_leaks: u16,
-    tower_cost: u32,
-    tower_range: u16,
-    tower_damage: i32,
-    build_time_ticks: u64,
-    gold_per_mob_kill: u32,
-    gold: u32,
-    leaks: u16,
-    current_wave: u8,
-    waves_total: u8,
-    wave_status: WaveStatusResponse,
-    towers: Vec<TowerResponse>,
-    mobs: Vec<MobResponse>,
-    build_queue: Vec<PendingBuildResponse>,
-}
-
-#[derive(Deserialize, Debug)]
-struct Position {
-    x: u16,
-    y: u16,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(tag = "type")]
-enum WaveStatusResponse {
-    Pause { until_tick: u64, next_wave_size: u16 },
-    InWave { spawned: u16, wave_size: u16, next_spawn_tick: u64 },
-}
-
-#[derive(Deserialize, Debug)]
-struct TowerResponse {
-    x: u16,
-    y: u16,
-    hp: i32,
-    player_id: u8,
-}
-
-#[derive(Deserialize, Debug)]
-struct MobResponse {
-    x: u16,
-    y: u16,
-    hp: i32,
-}
-
-#[derive(Deserialize, Debug)]
-struct PendingBuildResponse {
-    x: u16,
-    y: u16,
-    complete_tick: u64,
-    player_id: u8,
-}
-
-#[derive(Deserialize, Debug)]
-struct ListMatchesResponse {
-    matches: Vec<MatchInfo>,
-}
 
 /// Manage the SSE EventSource connection for game observation.
 /// Opens a connection when entering Spectating state, closes when leaving.
@@ -268,10 +201,10 @@ pub fn process_responses(
 ) {
     // Process SSE observe messages (drain all available)
     while let Ok(data) = sse_channel.observe_rx.try_recv() {
-        match serde_json::from_str::<ObserveResponse>(&data) {
+        match serde_json::from_str::<TdObservation>(&data) {
             Ok(obs) => {
                 game_state.tick = obs.tick;
-                game_state.tick_hz = obs.ticks_per_second;
+                game_state.ticks_per_second = obs.ticks_per_second;
                 game_state.map_width = obs.map_width;
                 game_state.map_height = obs.map_height;
                 game_state.spawn = (obs.spawn.x, obs.spawn.y);
@@ -286,31 +219,11 @@ pub fn process_responses(
                 game_state.leaks = obs.leaks;
                 game_state.current_wave = obs.current_wave;
                 game_state.waves_total = obs.waves_total;
-                game_state.wave_status = match obs.wave_status {
-                    WaveStatusResponse::Pause { until_tick, next_wave_size } => {
-                        WaveStatus::Pause { until_tick, next_wave_size }
-                    }
-                    WaveStatusResponse::InWave { spawned, wave_size, next_spawn_tick } => {
-                        WaveStatus::InWave { spawned, wave_size, next_spawn_tick }
-                    }
-                };
-                game_state.towers = obs.towers.into_iter().map(|t| TowerInfo {
-                    x: t.x,
-                    y: t.y,
-                    hp: t.hp,
-                    player_id: t.player_id,
-                }).collect();
-                game_state.mobs = obs.mobs.into_iter().map(|m| MobInfo {
-                    x: m.x,
-                    y: m.y,
-                    hp: m.hp,
-                }).collect();
-                game_state.build_queue = obs.build_queue.into_iter().map(|b| PendingBuildInfo {
-                    x: b.x,
-                    y: b.y,
-                    complete_tick: b.complete_tick,
-                    player_id: b.player_id,
-                }).collect();
+                game_state.wave_status = obs.wave_status;
+                game_state.walkable = obs.walkable;
+                game_state.towers = obs.towers;
+                game_state.mobs = obs.mobs;
+                game_state.build_queue = obs.build_queue;
                 game_state.initialized = true;
 
                 connection.status = ConnectionStatus::Connected;
@@ -337,7 +250,7 @@ pub fn process_responses(
         latest_match_data = Some(data);
     }
     if let Some(data) = latest_match_data {
-        match serde_json::from_str::<ListMatchesResponse>(&data) {
+        match serde_json::from_str::<ListMatchesResult>(&data) {
             Ok(list_result) => {
                 match_list.matches = list_result.matches;
             }

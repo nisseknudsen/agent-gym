@@ -25,7 +25,7 @@ bevy = { version = "0.18.0", default-features = false, features = [
 ] }
 
 # Networking
-serde = { version = "1", features = ["derive"] }
+td-types = { path = "../types" }
 serde_json = "1"
 
 # Async channels
@@ -38,6 +38,5 @@ tracing = "0.1"
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Window", "History", "Location", "MessageEvent", "EventSource"] }
-wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"
 tracing-wasm = "0.2"

@@ -146,7 +146,7 @@ pub fn update_hud(
             }
             WaveStatus::Pause { until_tick, next_wave_size } => {
                 let ticks_remaining = until_tick.saturating_sub(game_state.tick);
-                let seconds = ticks_remaining as f32 / game_state.tick_hz as f32;
+                let seconds = ticks_remaining as f32 / game_state.ticks_per_second as f32;
                 format!("Next wave ({} mobs) in {:.1}s", next_wave_size, seconds)
             }
             WaveStatus::InWave { spawned, wave_size, .. } => {

@@ -34,6 +34,11 @@ pub struct TdConfig {
 
     // Player count (set at match creation)
     pub player_count: u8,
+
+    // Map generation
+    pub maze_size: i32,
+    pub dilation_base_radius: f64,
+    pub dilation_amplitude: f64,
 }
 
 impl TdConfig {
@@ -106,18 +111,20 @@ impl TdConfig {
 
 impl Default for TdConfig {
     fn default() -> Self {
+        let maze_size = 10;
+        let grid_size = (maze_size * 3) as u16;
         Self {
-            width: 32,
-            height: 32,
-            spawn: (0, 16),
-            goal: (31, 16),
+            width: grid_size,
+            height: grid_size,
+            spawn: (0, 0),
+            goal: (grid_size - 1, grid_size - 1),
             tick_hz: 60,
             waves_total: 10,
-            inter_wave_pause: Micros::from_secs(30),
-            spawn_interval: Micros::from_secs(1),
+            inter_wave_pause: Micros::from_secs(10),
+            spawn_interval: Micros::from_millis(500),
             max_leaks: 10,
 
-            build_time: Micros::from_secs(5),
+            build_time: Micros::from_secs(2),
 
             basic_spec: TowerSpec {
                 cost: 15,
@@ -128,6 +135,10 @@ impl Default for TdConfig {
             },
 
             player_count: 1,
+
+            maze_size,
+            dilation_base_radius: 3.0,
+            dilation_amplitude: 2.0,
         }
     }
 }

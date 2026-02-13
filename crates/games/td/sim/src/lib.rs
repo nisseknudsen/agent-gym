@@ -12,5 +12,5 @@ pub use actions::TdAction;
 pub use config::{TdConfig, TowerKind, TowerSpec};
 pub use events::TdEvent;
 pub use game::TdGame;
-pub use observe::{ObsMob, ObsPendingBuild, ObsTower, ObsWaveStatus, TdObservation};
+pub use td_types::TdObservation;
 pub use world::{Grid, Mob, MobId, TdState, Tower, TowerId, WavePhase, World};

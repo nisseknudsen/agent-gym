@@ -6,7 +6,11 @@ edition = "2021"
 [dependencies]
 sim_core = { path = "../../../core" }
 sim_server = { path = "../../../server" }
+td-types = { path = "../types", features = ["schema"] }
 slotmap = "1"
+td-map-generator = { path = "../../../../../td-map-generator" }
+maze_generator = "2.0.0"
+rand = "0.7"
 
 # MCP dependencies
 rmcp = { version = "0.14", features = [

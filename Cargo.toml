@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/host",
     "crates/server",
+    "crates/games/td/types",
     "crates/games/td/sim",
     "crates/games/td/viewer",
 ]
@@ -11,5 +12,6 @@ default-members = [
     "crates/core",
     "crates/host",
     "crates/server",
+    "crates/games/td/types",
     "crates/games/td/sim",
 ]

@@ -20,13 +20,9 @@ use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpService, StreamableHttpServerConfig,
 };
 use sim_server::{GameServer, MatchError, MatchStatus, ServerConfig, SessionToken};
-use sim_td::config::TowerKind;
 use sim_td::mcp::types::*;
 use sim_td::mcp::TdMcpServer;
-use sim_td::observe::ObsWaveStatus;
 use sim_td::TdGame;
-use sim_td::TowerId;
-use slotmap::Key;
 use std::{collections::HashMap, convert::Infallible, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{net::TcpListener, sync::RwLock};
 use tokio_stream::StreamExt;
@@ -297,8 +293,7 @@ async fn poll_observe_loop(
 
         match game_server.observe(match_id, session_token).await {
             Ok(obs) => {
-                let result = transform_observation(obs);
-                let json = serde_json::to_string(&result).unwrap();
+                let json = serde_json::to_string(&obs).unwrap();
                 let _ = tx.send(json);
             }
             Err(e) => {
@@ -320,95 +315,8 @@ async fn poll_observe_loop(
 }
 
 // ---------------------------------------------------------------------------
-// Transformation helpers (GameServer types → JSON-compatible MCP types)
+// Transformation helpers (GameServer types → JSON-compatible types)
 // ---------------------------------------------------------------------------
-
-fn transform_observation(obs: sim_td::TdObservation) -> ObserveResult {
-    let wave_status = match obs.wave_status {
-        ObsWaveStatus::Pause {
-            until_tick,
-            next_wave_size,
-        } => WaveStatus::Pause {
-            until_tick,
-            next_wave_size,
-        },
-        ObsWaveStatus::InWave {
-            spawned,
-            wave_size,
-            next_spawn_tick,
-        } => WaveStatus::InWave {
-            spawned,
-            wave_size,
-            next_spawn_tick,
-        },
-    };
-
-    ObserveResult {
-        tick: obs.tick,
-        ticks_per_second: obs.tick_hz,
-
-        map_width: obs.map_width,
-        map_height: obs.map_height,
-        spawn: Position {
-            x: obs.spawn.0,
-            y: obs.spawn.1,
-        },
-        goal: Position {
-            x: obs.goal.0,
-            y: obs.goal.1,
-        },
-
-        max_leaks: obs.max_leaks,
-        tower_cost: obs.tower_cost,
-        tower_range: obs.tower_range,
-        tower_damage: obs.tower_damage,
-        build_time_ticks: obs.build_time_ticks,
-        gold_per_mob_kill: obs.gold_per_mob_kill,
-
-        gold: obs.gold,
-        leaks: obs.leaks,
-
-        current_wave: obs.current_wave,
-        waves_total: obs.waves_total,
-        wave_status,
-
-        towers: obs
-            .towers
-            .into_iter()
-            .map(|t| TowerInfo {
-                id: tower_id_to_string(t.id),
-                x: t.x,
-                y: t.y,
-                hp: t.hp,
-                tower_type: kind_to_string(t.kind),
-                player_id: t.player_id,
-                upgrade_level: t.upgrade_level,
-                damage: t.damage,
-                upgrade_cost: t.upgrade_cost,
-            })
-            .collect(),
-        mobs: obs
-            .mobs
-            .into_iter()
-            .map(|m| MobInfo {
-                x: m.x,
-                y: m.y,
-                hp: m.hp,
-            })
-            .collect(),
-        build_queue: obs
-            .build_queue
-            .into_iter()
-            .map(|b| PendingBuildInfo {
-                x: b.x,
-                y: b.y,
-                tower_type: kind_to_string(b.kind),
-                complete_tick: b.complete_tick,
-                player_id: b.player_id,
-            })
-            .collect(),
-    }
-}
 
 fn transform_match_list(matches: Vec<sim_server::MatchInfo>) -> ListMatchesResult {
     ListMatchesResult {
@@ -431,14 +339,4 @@ fn transform_match_list(matches: Vec<sim_server::MatchInfo>) -> ListMatchesResul
             })
             .collect(),
     }
-}
-
-fn kind_to_string(kind: TowerKind) -> String {
-    match kind {
-        TowerKind::Basic => "Basic".to_string(),
-    }
-}
-
-fn tower_id_to_string(id: TowerId) -> String {
-    id.data().as_ffi().to_string()
 }

@@ -1,13 +1,19 @@
 //! Bevy resources for game state.
 
 use bevy::prelude::*;
-use serde::{Deserialize, Serialize};
+
+// Re-export canonical types from td-types.
+pub use td_types::{
+    MobInfo, PendingBuildInfo, TowerInfo, WaveStatus,
+    MatchStatusInfo,
+};
+pub use td_types::MatchInfoResult as MatchInfo;
 
 /// Mirrors the server's observation state.
 #[derive(Resource, Default, Clone, Debug)]
 pub struct GameStateCache {
     pub tick: u64,
-    pub tick_hz: u32,
+    pub ticks_per_second: u32,
 
     pub map_width: u16,
     pub map_height: u16,
@@ -28,60 +34,14 @@ pub struct GameStateCache {
     pub waves_total: u8,
     pub wave_status: WaveStatus,
 
+    pub walkable: Vec<bool>,
+
     pub towers: Vec<TowerInfo>,
     pub mobs: Vec<MobInfo>,
     pub build_queue: Vec<PendingBuildInfo>,
 
     /// Whether we've received at least one observation.
     pub initialized: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum WaveStatus {
-    Pause {
-        #[serde(default)]
-        until_tick: u64,
-        #[serde(default)]
-        next_wave_size: u16,
-    },
-    InWave {
-        spawned: u16,
-        wave_size: u16,
-        next_spawn_tick: u64,
-    },
-}
-
-impl Default for WaveStatus {
-    fn default() -> Self {
-        Self::Pause {
-            until_tick: 0,
-            next_wave_size: 0,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TowerInfo {
-    pub x: u16,
-    pub y: u16,
-    pub hp: i32,
-    pub player_id: u8,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MobInfo {
-    pub x: u16,
-    pub y: u16,
-    pub hp: i32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PendingBuildInfo {
-    pub x: u16,
-    pub y: u16,
-    pub complete_tick: u64,
-    pub player_id: u8,
 }
 
 /// Connection state to the server.
@@ -157,23 +117,6 @@ impl RenderConfig {
 #[derive(Resource, Default)]
 pub struct MatchList {
     pub matches: Vec<MatchInfo>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MatchInfo {
-    pub match_id: u64,
-    pub status: MatchStatusInfo,
-    pub current_tick: u64,
-    pub player_count: u8,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum MatchStatusInfo {
-    WaitingForPlayers { current: u8, required: u8 },
-    Running,
-    Finished { outcome: String },
-    Terminated,
 }
 
 /// Current UI state.
