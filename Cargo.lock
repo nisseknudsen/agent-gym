@@ -4154,7 +4154,6 @@ dependencies = [
  "axum",
  "clap",
  "maze_generator",
- "rand 0.7.3",
  "rmcp",
  "schemars",
  "serde",
