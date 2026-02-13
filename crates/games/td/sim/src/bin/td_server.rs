@@ -24,6 +24,7 @@ use sim_td::mcp::types::*;
 use sim_td::mcp::TdMcpServer;
 use sim_td::TdGame;
 use std::{collections::HashMap, convert::Infallible, path::PathBuf, sync::Arc, time::Duration};
+use std::cmp::max;
 use tokio::{net::TcpListener, sync::RwLock};
 use tokio_stream::StreamExt;
 use tower_http::{cors::CorsLayer, services::ServeDir};
@@ -76,8 +77,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Shared game server
     let config = ServerConfig {
-        default_tick_hz: 20,
-        decision_hz: 4,
+        simulation_rate: 20,
+        interaction_rate: 1,
         max_matches: 100,
         event_buffer_capacity: 1024,
     };
@@ -253,7 +254,7 @@ async fn poll_match_list_loop(
     match_list_stream: Arc<RwLock<Option<MatchListStream>>>,
     tx: tokio::sync::broadcast::Sender<String>,
 ) {
-    let mut interval = tokio::time::interval(Duration::from_secs(2));
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
 
     loop {
         interval.tick().await;
@@ -281,7 +282,8 @@ async fn poll_observe_loop(
     session_token: SessionToken,
     tx: tokio::sync::broadcast::Sender<String>,
 ) {
-    let mut interval = tokio::time::interval(Duration::from_millis(100));
+    // visualize at rate of simulation but don't exceed 10Hz
+    let mut interval = tokio::time::interval(Duration::from_millis(max(1000/game_server.config.simulation_rate as u64,100)));
 
     loop {
         interval.tick().await;

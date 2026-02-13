@@ -30,8 +30,8 @@ impl TdMcpServer {
 
     pub fn with_default_config() -> Self {
         let config = ServerConfig {
-            default_tick_hz: 20,
-            decision_hz: 4,
+            simulation_rate: 20,
+            interaction_rate: 4,
             max_matches: 100,
             event_buffer_capacity: 1024,
         };

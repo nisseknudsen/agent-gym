@@ -87,8 +87,8 @@ impl Game for CounterGame {
 #[tokio::test]
 async fn test_create_and_list_matches() {
     let config = ServerConfig {
-        default_tick_hz: 100, // Fast for testing
-        decision_hz: 4,
+        simulation_rate: 100, // Fast for testing
+        interaction_rate: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -112,8 +112,8 @@ async fn test_create_and_list_matches() {
 #[tokio::test]
 async fn test_join_and_observe() {
     let config = ServerConfig {
-        default_tick_hz: 100,
-        decision_hz: 4,
+        simulation_rate: 100,
+        interaction_rate: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -142,8 +142,8 @@ async fn test_join_and_observe() {
 #[tokio::test]
 async fn test_submit_action_and_poll_events() {
     let config = ServerConfig {
-        default_tick_hz: 100,
-        decision_hz: 4,
+        simulation_rate: 100,
+        interaction_rate: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -199,8 +199,8 @@ async fn test_submit_action_and_poll_events() {
 #[tokio::test]
 async fn test_game_terminates() {
     let config = ServerConfig {
-        default_tick_hz: 100,
-        decision_hz: 4,
+        simulation_rate: 100,
+        interaction_rate: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -240,8 +240,8 @@ async fn test_game_terminates() {
 #[tokio::test]
 async fn test_terminate_match() {
     let config = ServerConfig {
-        default_tick_hz: 100,
-        decision_hz: 4,
+        simulation_rate: 100,
+        interaction_rate: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -266,8 +266,8 @@ async fn test_terminate_match() {
 #[tokio::test]
 async fn test_multiple_players() {
     let config = ServerConfig {
-        default_tick_hz: 100,
-        decision_hz: 4,
+        simulation_rate: 100,
+        interaction_rate: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -316,8 +316,8 @@ async fn test_multiple_players() {
 #[tokio::test]
 async fn test_determinism() {
     let config = ServerConfig {
-        default_tick_hz: 100,
-        decision_hz: 4,
+        simulation_rate: 100,
+        interaction_rate: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -374,8 +374,8 @@ async fn test_determinism() {
 #[tokio::test]
 async fn test_leave_match() {
     let config = ServerConfig {
-        default_tick_hz: 100,
-        decision_hz: 4,
+        simulation_rate: 100,
+        interaction_rate: 4,
         max_matches: 10,
         event_buffer_capacity: 100,
     };
@@ -402,8 +402,8 @@ async fn test_leave_match() {
 #[tokio::test]
 async fn test_max_matches() {
     let config = ServerConfig {
-        default_tick_hz: 100,
-        decision_hz: 4,
+        simulation_rate: 100,
+        interaction_rate: 4,
         max_matches: 2,
         event_buffer_capacity: 100,
     };
@@ -432,8 +432,8 @@ async fn test_max_matches() {
 #[tokio::test]
 async fn test_observe_next_returns_immediately_for_cached_data() {
     let config = ServerConfig {
-        default_tick_hz: 100,
-        decision_hz: 10, // Decision every 10 ticks (100ms)
+        simulation_rate: 100,
+        interaction_rate: 10, // Decision every 10 ticks (100ms)
         max_matches: 10,
         event_buffer_capacity: 100,
     };

@@ -17,7 +17,7 @@ struct MatchEntry<G: Game> {
 
 /// Game server that manages multiple concurrent matches.
 pub struct GameServer<G: Game> {
-    config: ServerConfig,
+    pub config: ServerConfig,
     matches: Arc<RwLock<HashMap<MatchId, MatchEntry<G>>>>,
     next_match_id: AtomicU64,
 }
@@ -71,12 +71,12 @@ where
         drop(matches);
 
         let match_id = self.next_match_id.fetch_add(1, Ordering::Relaxed);
-        let host = MatchHost::new(game_config, seed, self.config.default_tick_hz);
+        let host = MatchHost::new(game_config, seed, self.config.simulation_rate);
         let handle = MatchHandle::new(
             host,
             self.config.event_buffer_capacity,
             required_players,
-            self.config.decision_hz,
+            self.config.interaction_rate,
         );
 
         let task = spawn_tick_loop(handle.clone());
