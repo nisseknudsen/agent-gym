@@ -73,47 +73,6 @@ impl core::ops::Div<u32> for Micros {
     }
 }
 
-/// Q32.32 fixed-point speed in cells per second.
-///
-/// Storage: `u64` with 32 integer bits + 32 fractional bits.
-/// Separate type for type safety (can't accidentally mix duration and speed).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Speed(u64);
-
-impl Speed {
-    const FRAC_BITS: u32 = 32;
-
-    /// Create from whole cells per second.
-    pub const fn from_cells_per_sec(cps: u32) -> Self {
-        Self((cps as u64) << Self::FRAC_BITS)
-    }
-
-    /// Create from a fractional cells per second (numer/denom).
-    pub const fn from_cells_per_sec_frac(numer: u32, denom: u32) -> Self {
-        // (numer / denom) in Q32.32 = (numer << 32) / denom
-        Self(((numer as u64) << Self::FRAC_BITS) / denom as u64)
-    }
-
-    /// Convert speed to tick interval (ticks between moves).
-    ///
-    /// Formula: interval = tick_hz / speed
-    /// Returns ticks between each cell movement.
-    pub const fn to_tick_interval(self, tick_hz: u32) -> u64 {
-        if self.0 == 0 {
-            return u64::MAX;
-        }
-        // self.0 is Q32.32 cells/sec
-        // We want: tick_hz / (self.0 >> 32)
-        // But to preserve precision: (tick_hz << 32) / self.0
-        ((tick_hz as u64) << Self::FRAC_BITS) / self.0
-    }
-
-    /// Returns the raw Q32.32 value.
-    pub const fn raw(self) -> u64 {
-        self.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,27 +104,6 @@ mod tests {
         // 500 ms at 60 Hz = 30 ticks
         let m = Micros::from_millis(500);
         assert_eq!(m.to_ticks(60), 30);
-    }
-
-    #[test]
-    fn speed_to_tick_interval() {
-        // 2 cells/sec at 60 Hz = 30 ticks between moves
-        let s = Speed::from_cells_per_sec(2);
-        assert_eq!(s.to_tick_interval(60), 30);
-
-        // 1 cell/sec at 60 Hz = 60 ticks between moves
-        let s = Speed::from_cells_per_sec(1);
-        assert_eq!(s.to_tick_interval(60), 60);
-
-        // 0.5 cells/sec at 60 Hz = 120 ticks between moves
-        let s = Speed::from_cells_per_sec_frac(1, 2);
-        assert_eq!(s.to_tick_interval(60), 120);
-    }
-
-    #[test]
-    fn speed_zero() {
-        let s = Speed::from_cells_per_sec(0);
-        assert_eq!(s.to_tick_interval(60), u64::MAX);
     }
 
     #[test]

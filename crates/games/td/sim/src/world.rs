@@ -1,5 +1,5 @@
 use crate::config::{TdConfig, TowerKind};
-use sim_core::{PlayerId, Speed, Tick};
+use sim_core::{PlayerId, Tick};
 use slotmap::{new_key_type, SlotMap};
 use std::collections::VecDeque;
 
@@ -89,12 +89,13 @@ pub struct Tower {
 
 #[derive(Clone, Debug)]
 pub struct Mob {
-    pub x: u16,
-    pub y: u16,
+    pub x: f32,
+    pub y: f32,
     pub hp: i32,
     pub dmg: i32,
-    pub speed: Speed,
-    pub next_move_tick: Tick,
+    pub speed: f32,
+    /// Next grid cell this mob is walking toward.
+    pub target: (u16, u16),
 }
 
 #[derive(Clone, Debug)]

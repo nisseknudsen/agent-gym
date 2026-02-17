@@ -66,8 +66,8 @@ pub struct TowerInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct MobInfo {
-    pub x: u16,
-    pub y: u16,
+    pub x: f32,
+    pub y: f32,
     pub hp: i32,
 }
 
@@ -96,7 +96,7 @@ pub struct TdObservation {
 
     pub max_leaks: u16,
     pub tower_cost: u32,
-    pub tower_range: u16,
+    pub tower_range: f32,
     pub tower_damage: i32,
     pub build_time_ticks: u64,
     pub gold_per_mob_kill: u32,

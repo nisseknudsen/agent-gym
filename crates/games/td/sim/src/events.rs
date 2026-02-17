@@ -16,8 +16,8 @@ pub enum TdEvent {
     },
     MobKilled {
         id: MobId,
-        x: u16,
-        y: u16,
+        x: f32,
+        y: f32,
     },
     MobLeaked {
         id: MobId,

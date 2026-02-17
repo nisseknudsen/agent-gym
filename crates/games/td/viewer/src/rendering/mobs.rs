@@ -28,15 +28,6 @@ pub fn sync_mobs(
     // This is imperfect but works for visualization
     let server_mobs: Vec<_> = game_state.mobs.iter().collect();
 
-    // Count mobs at each position in the server state
-    let mut server_mob_counts: std::collections::HashMap<(u16, u16), Vec<&crate::game::MobInfo>> = std::collections::HashMap::new();
-    for mob_info in &server_mobs {
-        server_mob_counts
-            .entry((mob_info.x, mob_info.y))
-            .or_default()
-            .push(mob_info);
-    }
-
     // Track which server mobs we've matched
     let mut matched_server_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut entities_to_despawn: Vec<Entity> = Vec::new();
@@ -51,8 +42,8 @@ pub fn sync_mobs(
                 continue;
             }
 
-            let dx = mob_info.x as f32 - mob.grid_x as f32;
-            let dy = mob_info.y as f32 - mob.grid_y as f32;
+            let dx = mob_info.x - mob.grid_x;
+            let dy = mob_info.y - mob.grid_y;
             let dist = dx * dx + dy * dy;
 
             // Allow matching if close (within 2 cells)
@@ -75,7 +66,7 @@ pub fn sync_mobs(
             mob.hp = mob_info.hp;
 
             // Target position (will be interpolated)
-            let target_pos = render_config.grid_to_world(mob_info.x, mob_info.y);
+            let target_pos = render_config.grid_to_world_f32(mob_info.x, mob_info.y);
             transform.translation = target_pos.extend(2.0);
 
             // Update HP bar
@@ -102,7 +93,7 @@ pub fn sync_mobs(
             continue;
         }
 
-        let world_pos = render_config.grid_to_world(mob_info.x, mob_info.y);
+        let world_pos = render_config.grid_to_world_f32(mob_info.x, mob_info.y);
         let hp_ratio = (mob_info.hp as f32 / MOB_HP_MAX as f32).clamp(0.0, 1.0);
 
         commands.spawn((
@@ -153,7 +144,7 @@ pub fn interpolate_mob_positions(
     let lerp_speed = 10.0; // How quickly to interpolate
 
     for (mob, mut transform) in mobs.iter_mut() {
-        let target_pos = render_config.grid_to_world(mob.grid_x, mob.grid_y);
+        let target_pos = render_config.grid_to_world_f32(mob.grid_x, mob.grid_y);
         let current_pos = Vec2::new(transform.translation.x, transform.translation.y);
 
         // Lerp towards target position

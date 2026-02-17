@@ -22,7 +22,7 @@ pub struct GameStateCache {
 
     pub max_leaks: u16,
     pub tower_cost: u32,
-    pub tower_range: u16,
+    pub tower_range: f32,
     pub tower_damage: i32,
     pub build_time_ticks: u64,
     pub gold_per_mob_kill: u32,
@@ -96,11 +96,19 @@ impl Default for RenderConfig {
 }
 
 impl RenderConfig {
-    /// Convert grid coordinates to world position.
+    /// Convert grid coordinates (integer cell) to world position.
     pub fn grid_to_world(&self, x: u16, y: u16) -> Vec2 {
         Vec2::new(
             self.grid_offset.x + (x as f32 + 0.5) * self.cell_size,
             self.grid_offset.y + (y as f32 + 0.5) * self.cell_size,
+        )
+    }
+
+    /// Convert float grid coordinates to world position.
+    pub fn grid_to_world_f32(&self, x: f32, y: f32) -> Vec2 {
+        Vec2::new(
+            self.grid_offset.x + x * self.cell_size,
+            self.grid_offset.y + y * self.cell_size,
         )
     }
 

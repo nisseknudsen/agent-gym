@@ -1,8 +1,8 @@
 use crate::config::TowerKind;
 use crate::events::TdEvent;
-use crate::pathing::{compute_distance_field, move_mob, MobMoveResult};
+use crate::pathing::{compute_distance_field, pick_next_target, MobMoveResult};
 use crate::world::{CellState, Mob, MobId, PendingBuild, TdState, Tower, TowerId, WavePhase};
-use sim_core::{PlayerId, Speed, Tick};
+use sim_core::{PlayerId, Tick};
 
 pub fn try_queue_build(
     state: &mut TdState,
@@ -160,12 +160,12 @@ pub fn update_wave(state: &mut TdState, tick: Tick, events: &mut Vec<TdEvent>) {
                 let spawn = state.config.spawn;
                 let mob_hp = state.config.mob_hp(state.current_wave, player_count);
                 state.world.mobs.insert(Mob {
-                    x: spawn.0,
-                    y: spawn.1,
+                    x: spawn.0 as f32 + 0.5,
+                    y: spawn.1 as f32 + 0.5,
                     hp: mob_hp,
                     dmg: 1,
-                    speed: Speed::from_cells_per_sec(2),
-                    next_move_tick: tick,
+                    speed: 2.0,
+                    target: spawn,
                 });
                 *spawned += 1;
                 *next_spawn_tick =
@@ -190,27 +190,47 @@ pub fn update_wave(state: &mut TdState, tick: Tick, events: &mut Vec<TdEvent>) {
     }
 }
 
-pub fn move_mobs(state: &mut TdState, tick: Tick, events: &mut Vec<TdEvent>) {
+pub fn move_mobs(state: &mut TdState, _tick: Tick, events: &mut Vec<TdEvent>) {
+    let dt = 1.0 / state.config.tick_hz as f32;
     let mob_ids: Vec<MobId> = state.world.mobs.keys().collect();
 
     let mut leaked_ids = Vec::new();
     let mut attacks: Vec<(MobId, TowerId)> = Vec::new();
 
     for mob_id in mob_ids {
-        let can_move = tick >= state.world.mobs[mob_id].next_move_tick;
-        match move_mob(state, mob_id, can_move) {
-            MobMoveResult::Moved => {
-                let interval =
-                    state.config.speed_to_move_interval(state.world.mobs[mob_id].speed);
-                state.world.mobs[mob_id].next_move_tick = tick + interval;
+        let mob = &state.world.mobs[mob_id];
+        let speed = mob.speed;
+        let step = speed * dt;
+        let tx = mob.target.0 as f32 + 0.5;
+        let ty = mob.target.1 as f32 + 0.5;
+        let dx = tx - mob.x;
+        let dy = ty - mob.y;
+        let dist = (dx * dx + dy * dy).sqrt();
+
+        if dist <= step {
+            // Arrived at target center — snap and pick next target
+            let cell = state.world.mobs[mob_id].target;
+            state.world.mobs[mob_id].x = cell.0 as f32 + 0.5;
+            state.world.mobs[mob_id].y = cell.1 as f32 + 0.5;
+
+            match pick_next_target(state, cell.0, cell.1) {
+                MobMoveResult::NextTarget(nx, ny) => {
+                    state.world.mobs[mob_id].target = (nx, ny);
+                }
+                MobMoveResult::Leaked => {
+                    leaked_ids.push(mob_id);
+                }
+                MobMoveResult::AttackTower(Some(tower_id)) => {
+                    attacks.push((mob_id, tower_id));
+                }
+                MobMoveResult::AttackTower(None) => {}
             }
-            MobMoveResult::Leaked => {
-                leaked_ids.push(mob_id);
-            }
-            MobMoveResult::AttackTower(Some(tower_id)) => {
-                attacks.push((mob_id, tower_id));
-            }
-            MobMoveResult::AttackTower(None) => {}
+        } else {
+            // Move fractionally toward target
+            let dir_x = dx / dist;
+            let dir_y = dy / dist;
+            state.world.mobs[mob_id].x += dir_x * step;
+            state.world.mobs[mob_id].y += dir_y * step;
         }
     }
 
@@ -253,7 +273,7 @@ pub fn move_mobs(state: &mut TdState, tick: Tick, events: &mut Vec<TdEvent>) {
 
 pub fn tower_attacks(state: &mut TdState, tick: Tick, _events: &mut Vec<TdEvent>) {
     // Collect tower firing info (can't iterate and mutate simultaneously)
-    let tower_shots: Vec<(TowerId, u16, u16, u16, i32)> = state
+    let tower_shots: Vec<(TowerId, u16, u16, f32, i32)> = state
         .world
         .towers
         .iter()
@@ -280,15 +300,17 @@ pub fn tower_attacks(state: &mut TdState, tick: Tick, _events: &mut Vec<TdEvent>
 fn find_tower_target(
     tx: u16,
     ty: u16,
-    range: u16,
+    range: f32,
     mobs: &slotmap::SlotMap<MobId, Mob>,
 ) -> Option<MobId> {
-    let range_sq = (range as i32) * (range as i32);
-    let mut best: Option<(MobId, i32, i32)> = None;
+    let range_sq = range * range;
+    let tcx = tx as f32 + 0.5;
+    let tcy = ty as f32 + 0.5;
+    let mut best: Option<(MobId, f32, i32)> = None;
 
     for (id, mob) in mobs.iter() {
-        let dx = (mob.x as i32) - (tx as i32);
-        let dy = (mob.y as i32) - (ty as i32);
+        let dx = mob.x - tcx;
+        let dy = mob.y - tcy;
         let dist_sq = dx * dx + dy * dy;
 
         if dist_sq <= range_sq {

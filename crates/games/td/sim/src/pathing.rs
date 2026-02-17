@@ -1,4 +1,4 @@
-use crate::world::{CellState, Grid, MobId, TdState, TowerId};
+use crate::world::{CellState, Grid, TdState, TowerId};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
@@ -99,33 +99,37 @@ pub fn compute_distance_field(grid: &Grid, goal: (u16, u16), dist: &mut [u32]) {
 }
 
 pub enum MobMoveResult {
-    Moved,
+    /// Next target cell to walk toward.
+    NextTarget(u16, u16),
+    /// Mob has reached the goal — leaked.
     Leaked,
+    /// Mob should attack a tower (path blocked or stuck).
     AttackTower(Option<TowerId>),
 }
 
-/// Move a single mob (if can_move is true) or just determine attack target.
-pub fn move_mob(state: &mut TdState, mob_id: MobId, can_move: bool) -> MobMoveResult {
-    let mob = &state.world.mobs[mob_id];
-    let mx = mob.x;
-    let my = mob.y;
+/// Pick the next grid-cell target for a mob currently at `(cx, cy)`.
+///
+/// Called when a mob arrives at its current target cell center.
+/// Uses the distance field to choose the best neighbor, or falls back
+/// to attacking / BFS-toward-tower when the path is blocked.
+pub fn pick_next_target(state: &TdState, cx: u16, cy: u16) -> MobMoveResult {
     let goal = state.config.goal;
 
-    if mx == goal.0 && my == goal.1 {
+    if cx == goal.0 && cy == goal.1 {
         return MobMoveResult::Leaked;
     }
 
     let grid = &state.world.grid;
-    let mob_cell = grid.idx(mx, my);
-    let mob_dist = state.dist[mob_cell];
+    let cell_idx = grid.idx(cx, cy);
+    let cell_dist = state.dist[cell_idx];
 
-    if mob_dist != u32::MAX {
+    if cell_dist != u32::MAX {
         let mut best_neighbor: Option<(u16, u16)> = None;
-        let mut best_dist = mob_dist;
+        let mut best_dist = cell_dist;
 
         for (i, &(dx, dy)) in NEIGHBORS.iter().enumerate() {
-            let nx = mx as i32 + dx;
-            let ny = my as i32 + dy;
+            let nx = cx as i32 + dx;
+            let ny = cy as i32 + dy;
 
             if nx < 0 || ny < 0 || nx >= grid.width as i32 || ny >= grid.height as i32 {
                 continue;
@@ -139,7 +143,7 @@ pub fn move_mob(state: &mut TdState, mob_id: MobId, can_move: bool) -> MobMoveRe
                 continue;
             }
 
-            if is_diagonal(i) && !diagonal_allowed(grid, mx, my, dx, dy) {
+            if is_diagonal(i) && !diagonal_allowed(grid, cx, cy, dx, dy) {
                 continue;
             }
 
@@ -151,28 +155,18 @@ pub fn move_mob(state: &mut TdState, mob_id: MobId, can_move: bool) -> MobMoveRe
         }
 
         if let Some((nx, ny)) = best_neighbor {
-            if can_move {
-                state.world.mobs[mob_id].x = nx;
-                state.world.mobs[mob_id].y = ny;
-                return MobMoveResult::Moved;
-            } else {
-                return MobMoveResult::AttackTower(None);
-            }
+            return MobMoveResult::NextTarget(nx, ny);
         }
     }
 
     // Unreachable or stuck: attack adjacent tower
-    if let Some(tower_id) = find_attack_target(state, mx, my) {
+    if let Some(tower_id) = find_attack_target(state, cx, cy) {
         return MobMoveResult::AttackTower(Some(tower_id));
     }
 
     // Not adjacent to any tower — move toward nearest tower via BFS
-    if can_move {
-        if let Some((nx, ny)) = find_move_toward_tower(state, mx, my) {
-            state.world.mobs[mob_id].x = nx;
-            state.world.mobs[mob_id].y = ny;
-            return MobMoveResult::Moved;
-        }
+    if let Some((nx, ny)) = find_move_toward_tower(state, cx, cy) {
+        return MobMoveResult::NextTarget(nx, ny);
     }
 
     MobMoveResult::AttackTower(None)

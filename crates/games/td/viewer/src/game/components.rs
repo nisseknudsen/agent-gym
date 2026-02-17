@@ -14,8 +14,8 @@ pub struct Tower {
 /// Marker component for mob entities.
 #[derive(Component)]
 pub struct Mob {
-    pub grid_x: u16,
-    pub grid_y: u16,
+    pub grid_x: f32,
+    pub grid_y: f32,
     pub hp: i32,
     /// Previous position for interpolation.
     pub prev_x: f32,

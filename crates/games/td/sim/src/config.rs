@@ -1,4 +1,4 @@
-use sim_core::{Micros, Speed};
+use sim_core::Micros;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TowerKind {
@@ -9,7 +9,7 @@ pub enum TowerKind {
 pub struct TowerSpec {
     pub cost: u32,
     pub hp: i32,
-    pub range: u16,
+    pub range: f32,
     pub damage: i32,
     pub fire_period: Micros,
 }
@@ -50,10 +50,6 @@ impl TdConfig {
 
     pub fn duration_to_ticks(&self, d: Micros) -> u64 {
         d.to_ticks(self.tick_hz)
-    }
-
-    pub fn speed_to_move_interval(&self, s: Speed) -> u64 {
-        s.to_tick_interval(self.tick_hz)
     }
 
     /// Mob HP: `floor(10 * 1.15^w * p)`
@@ -129,7 +125,7 @@ impl Default for TdConfig {
             basic_spec: TowerSpec {
                 cost: 15,
                 hp: 100,
-                range: 4,
+                range: 4.0,
                 damage: 5,
                 fire_period: Micros::from_secs(1),
             },
